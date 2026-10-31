@@ -9,7 +9,10 @@ from tests.support import test_application as make_application
 
 def test_published_b_contract_maps_to_real_routes_without_a(tmp_path):
     app = make_application(tmp_path).app
-    normalize = lambda value: re.sub(r"\{[^}]+\}", "{}", value)
+
+    def normalize(value):
+        return re.sub(r"\{[^}]+\}", "{}", value)
+
     actual = get_openapi(title="Route inventory", version="test", routes=app.routes)
     implemented = {
         (method, normalize(path)) for path, operations in actual["paths"].items() for method in operations
