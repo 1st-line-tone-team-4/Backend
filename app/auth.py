@@ -38,6 +38,8 @@ class JWTAuthenticator:
                     User.auth_issuer == self.settings.auth_issuer, User.auth_subject == subject
                 )
             )
-            if user is None:
+            # Database collations may ignore trailing spaces or case. Identity
+            # claims must match exactly even when SQL equality returned a row.
+            if user is None or user.auth_issuer != self.settings.auth_issuer or user.auth_subject != subject:
                 raise ApiError(401, "UNAUTHORIZED", "Invalid authentication token.")
             return user.id

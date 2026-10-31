@@ -7,7 +7,7 @@ import uuid
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import delete
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from .models import IdempotencyRequest
 
 
@@ -104,43 +104,60 @@ def idempotent(ctx, user_id, operation, key, request_data, action):
             raise ApiError(409, "REQUEST_IN_PROGRESS", "Request is still in progress.")
         return JSONResponse(status_code=row.http_status, content=row.response_body)
 
-    try:
-        with ctx.db.transaction() as session:
-            now = utcnow()
-            # A conditional delete acquires the key lock before replacing an expired
-            # record; a concurrent request cannot delete a newly inserted record.
-            session.execute(
-                delete(IdempotencyRequest).where(
-                    IdempotencyRequest.user_id == user_id,
-                    IdempotencyRequest.operation_id == operation,
-                    IdempotencyRequest.idempotency_key == key,
-                    IdempotencyRequest.expires_at <= now,
+    for attempt in range(3):
+        claiming = True
+        try:
+            with ctx.db.transaction() as session:
+                now = utcnow()
+                # Serialize expired-row replacement. For a missing key, InnoDB
+                # gap locks can deadlock at insert; only that claim is retryable.
+                session.execute(
+                    delete(IdempotencyRequest).where(
+                        IdempotencyRequest.user_id == user_id,
+                        IdempotencyRequest.operation_id == operation,
+                        IdempotencyRequest.idempotency_key == key,
+                        IdempotencyRequest.expires_at <= now,
+                    )
                 )
-            )
-            row = session.get(IdempotencyRequest, identity)
-            if row:
-                return replay(row)
-            row = IdempotencyRequest(
-                user_id=user_id,
-                operation_id=operation,
-                idempotency_key=key,
-                request_hash=digest,
-                status="in_progress",
-                created_at=now,
-                expires_at=now + timedelta(hours=24),
-            )
-            session.add(row)
-            session.flush()
-            status, body = action(session)
-            # Validate serialization before committing any domain changes.
-            json.dumps(body, allow_nan=False)
-            row.status, row.http_status, row.response_body = "completed", status, body
-            session.flush()
-        return JSONResponse(status_code=status, content=body)
-    except IntegrityError:
-        # A concurrent insert may have won; unrelated integrity errors must propagate.
-        with ctx.db.transaction() as session:
-            row = session.get(IdempotencyRequest, identity)
-            if row is not None:
-                return replay(row)
-        raise
+                row = session.get(IdempotencyRequest, identity)
+                if row:
+                    claiming = False
+                    return replay(row)
+                row = IdempotencyRequest(
+                    user_id=user_id,
+                    operation_id=operation,
+                    idempotency_key=key,
+                    request_hash=digest,
+                    status="in_progress",
+                    created_at=now,
+                    expires_at=now + timedelta(hours=24),
+                )
+                session.add(row)
+                session.flush()
+                claiming = False
+                status, body = action(session)
+                # Validate serialization before committing any domain changes.
+                json.dumps(body, allow_nan=False)
+                row.status, row.http_status, row.response_body = "completed", status, body
+                session.flush()
+            return JSONResponse(status_code=status, content=body)
+        except OperationalError as exc:
+            if (
+                not claiming
+                or ctx.db.engine.dialect.name != "mysql"
+                or getattr(exc.orig, "args", ())[:1] != (1213,)
+            ):
+                raise
+            # The transaction context has rolled back. Never repeat a callback
+            # or retry an uncertain commit, timeout, or connection failure.
+            if attempt == 2:
+                raise ApiError(409, "REQUEST_IN_PROGRESS", "Request is still in progress.") from None
+        except IntegrityError:
+            if not claiming:
+                raise
+            # A concurrent claim may have won; unrelated errors must propagate.
+            with ctx.db.transaction() as session:
+                row = session.get(IdempotencyRequest, identity)
+                if row is not None:
+                    return replay(row)
+            raise

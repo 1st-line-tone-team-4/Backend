@@ -10,6 +10,11 @@ from sqlalchemy.engine import make_url
 from app.db import Database
 from app.models import User, PlanTask
 import tests.test_e2e as e2e
+from tests.mysql_boundary_checks import (
+    assert_mysql_claim_deadlock,
+    assert_mysql_exact_jwt_identity,
+    assert_mysql_unknown_uses_current_read,
+)
 from tests.support import test_application as make_application
 
 
@@ -70,4 +75,7 @@ def mysql_live(tmp_path, monkeypatch):
 
 
 def test_mysql_migrations_and_complete_http_pipeline(mysql_live):
+    assert_mysql_exact_jwt_identity(mysql_live)
+    assert_mysql_claim_deadlock(mysql_live)
     e2e.test_complete_content_pipeline_and_a_boundary(mysql_live)
+    assert_mysql_unknown_uses_current_read(mysql_live)
