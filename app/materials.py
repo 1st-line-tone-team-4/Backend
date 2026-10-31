@@ -682,7 +682,7 @@ class AnalysisHandler:
 
             extract(m, data)
             source = output.get("source_text") if isinstance(output, dict) else None
-            if not isinstance(source, str) or not 1 <= len(source.strip()) <= 100000:
+            if not isinstance(source, str) or not source.strip() or len(source) > 100000:
                 err(422, "INVALID_OUTPUT", "Image transcription is invalid.")
             chunks = [
                 {
@@ -713,7 +713,8 @@ class AnalysisHandler:
                 not isinstance(u, dict)
                 or set(u) != {"title", "concepts"}
                 or not isinstance(u["title"], str)
-                or not 1 <= len(u["title"].strip()) <= 200
+                or not u["title"].strip()
+                or len(u["title"]) > 200
                 or not isinstance(u["concepts"], list)
                 or not u["concepts"]
             ):
@@ -726,17 +727,18 @@ class AnalysisHandler:
                     invalid()
                 if (
                     not isinstance(c["name"], str)
-                    or not 1 <= len(c["name"].strip()) <= 200
+                    or not c["name"].strip()
+                    or len(c["name"]) > 200
                     or not isinstance(c["summary"], str)
-                    or not 1 <= len(c["summary"].strip()) <= 12000
+                    or not c["summary"].strip()
+                    or len(c["summary"]) > 12000
                 ):
                     invalid()
                 if (
                     not isinstance(c["checklist_items"], list)
                     or not 1 <= len(c["checklist_items"]) <= 50
                     or any(
-                        not isinstance(x, str) or not 1 <= len(x.strip()) <= 2000
-                        for x in c["checklist_items"]
+                        not isinstance(x, str) or not x.strip() or len(x) > 2000 for x in c["checklist_items"]
                     )
                 ):
                     invalid()

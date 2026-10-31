@@ -7,7 +7,7 @@ import os
 
 from app.core import ApiError, Settings, uid, utcnow
 from app.models import User
-from app.ports import TaskGateway
+from app.ports import QuestionTaskState, TaskGateway
 
 
 class FixtureAuth:
@@ -30,12 +30,20 @@ class FixtureTasks(TaskGateway):
     def material_in_use(self, session, user_id, material_id):
         return any(t["owner"] == user_id and t["material"] == material_id for t in self.tasks.values())
 
-    def validate_question_task(self, session, user_id, task_id, unit_id, concept_version_ids):
+    def read_question_task(self, session, user_id, task_id):
         task = self.tasks.get(task_id)
         if not task or task["owner"] != user_id:
-            raise ApiError(404, "NOT_FOUND", "Task not found.")
-        if task["unit"] != unit_id or set(task["versions"]) != set(concept_version_ids):
-            raise ApiError(422, "RELATION_MISMATCH", "Task versions do not match.")
+            return None
+        return QuestionTaskState(
+            task_id=task_id,
+            user_id=task["owner"],
+            unit_id=task["unit"],
+            concept_version_ids=frozenset(task["versions"]),
+            task_type=task["task_type"],
+            active_revision=task["active_revision"],
+            target_count=task["target_count"],
+            completed_count=task["completed_count"],
+        )
 
     def read_question_attempts(self, session, user_id, set_id, question_ids):
         return {

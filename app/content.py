@@ -265,32 +265,34 @@ def create_set(
         if any(c.unit_id != unit.id for c in concepts) or len({c.id for c in concepts}) != len(concepts):
             raise ApiError(422, "INVALID_CONCEPT_VERSION", "Versions must belong to the selected unit.")
         if data["task_id"]:
-            ctx.task_gateway.validate_question_task(session, user, data["task_id"], unit.id, vids)
+            ctx.task_gateway.validate_question_task(
+                session, user, data["task_id"], unit.id, vids, count=data["count"]
+            )
         ctx.providers.ensure_model(data["model_id"])
         rid = uid()
         payload = {k: data[k] for k in ("unit_id", "task_id", "concept_version_ids", "count", "difficulty")}
         payload["concept_version_ids"] = sorted(vids)
-        for prior in session.scalars(
-            select(Job).where(
-                Job.user_id == user,
-                Job.kind == "questions",
-                Job.status.in_(["queued", "running", "outcome_unknown"]),
-            )
-        ):
-            if prior.request_payload == payload:
-                if prior.status in ("queued", "running"):
-                    raise ApiError(409, "JOB_IN_PROGRESS", "A matching job is already active.")
-                # An unknown outcome stops mattering once it was explicitly
-                # restarted or its set was later completed.
-                resolved = session.scalar(
-                    select(Job.id).where(Job.previous_job_id == prior.id)
-                ) or session.scalar(
-                    select(QuestionSet.id).where(
-                        QuestionSet.id == prior.resource_id, QuestionSet.status == "ready"
-                    )
+        matching_jobs = [
+            prior
+            for prior in session.scalars(
+                select(Job)
+                .where(
+                    Job.user_id == user,
+                    Job.kind == "questions",
+                    Job.status.in_(["queued", "running", "outcome_unknown"]),
                 )
-                if not resolved and not data["acknowledge_possible_duplicate_cost"]:
-                    raise ApiError(409, "POSSIBLE_DUPLICATE_COST", "The previous outcome is unknown.")
+                # InnoDB REPEATABLE READ must see a just-completed unknown job,
+                # even if earlier material/version reads established a snapshot.
+                .with_for_update()
+            )
+            if prior.request_payload == payload
+        ]
+        if any(prior.status in ("queued", "running") for prior in matching_jobs):
+            raise ApiError(409, "JOB_IN_PROGRESS", "A matching job is already active.")
+        # A successor does not establish whether the original call was billed.
+        # Contract 1.3 requires fresh acknowledgement while an unknown remains.
+        if matching_jobs and not data["acknowledge_possible_duplicate_cost"]:
+            raise ApiError(409, "POSSIBLE_DUPLICATE_COST", "The previous outcome is unknown.")
         job = ctx.jobs.enqueue(
             session,
             user_id=user,
@@ -580,7 +582,7 @@ class QuestionsHandler:
             ):
                 invalid()
             if not all(
-                isinstance(item[k], str) and 0 < len(item[k].strip()) <= 12000
+                isinstance(item[k], str) and item[k].strip() and len(item[k]) <= 12000
                 for k in ("prompt", "public_explanation")
             ):
                 invalid()
@@ -609,7 +611,8 @@ class QuestionsHandler:
                 or set(answer) != {"type", "text"}
                 or answer.get("type") != typ
                 or not isinstance(answer.get("text"), str)
-                or not 1 <= len(answer["text"].strip()) <= 12000
+                or not answer["text"].strip()
+                or len(answer["text"]) > 12000
             ):
                 invalid()
             accepted_answers = item["accepted_answers"]
@@ -704,9 +707,11 @@ class ExplanationHandler:
         title, markdown, evidence = output["title"], output["explanation_markdown"], output["evidence"]
         if (
             not isinstance(title, str)
-            or not 1 <= len(title.strip()) <= 200
+            or not title.strip()
+            or len(title) > 200
             or not isinstance(markdown, str)
-            or not 1 <= len(markdown.strip()) <= 24000
+            or not markdown.strip()
+            or len(markdown) > 24000
             or not isinstance(evidence, list)
             or not evidence
         ):
@@ -728,7 +733,8 @@ class ExplanationHandler:
                 or chunk_id not in allowed
                 or chunk_id in found
                 or not isinstance(excerpt, str)
-                or not 1 <= len(excerpt.strip()) <= 2000
+                or not excerpt.strip()
+                or len(excerpt) > 2000
             ):
                 invalid()
             chunk = session.get(MaterialChunk, chunk_id)
