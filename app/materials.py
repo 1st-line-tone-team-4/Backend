@@ -222,20 +222,44 @@ async def put_file(materialId: str, request: Request, token: str):
     validate_path_id(materialId)
     ctx = get_context(request)
     owner = ctx.storage.verify(token, materialId, "put")
-    with ctx.db.transaction() as s:
-        m = owned(s, owner, materialId, True)
-        if m.processing_status != "upload_pending":
-            err(409, "UPLOAD_CLOSED", "Upload is closed.")
-        if request.headers.get("content-type", "").split(";")[0].strip() != m.mime_type:
-            err(422, "INVALID_UPLOAD", "Content type does not match.")
-        data = bytearray()
-        async for part in request.stream():
-            data.extend(part)
-            if len(data) > m.size_bytes or len(data) > 20971520:
-                err(422, "INVALID_UPLOAD", "Upload is too large.")
-        content = bytes(data)
-        await run_in_threadpool(extract, m, content)
-        await run_in_threadpool(ctx.storage.write, m.storage_key, content)
+
+    # Never hold a DB transaction, row lock or pooled connection while the body
+    # streams in or the parser subprocess runs. Sync DB work runs off the loop.
+    def snapshot():
+        with ctx.db.transaction() as s:
+            m = owned(s, owner, materialId)
+            if m.processing_status != "upload_pending":
+                err(409, "UPLOAD_CLOSED", "Upload is closed.")
+            return m.mime_type, m.size_bytes, m.storage_key
+
+    mime_type, size_bytes, storage_key = await run_in_threadpool(snapshot)
+    if request.headers.get("content-type", "").split(";")[0].strip() != mime_type:
+        err(422, "INVALID_UPLOAD", "Content type does not match.")
+    data = bytearray()
+    async for part in request.stream():
+        data.extend(part)
+        if len(data) > size_bytes or len(data) > 20971520:
+            err(422, "INVALID_UPLOAD", "Upload is too large.")
+    content = bytes(data)
+    if len(content) != size_bytes:
+        err(422, "INVALID_UPLOAD", "Upload size does not match.")
+    await run_in_threadpool(extract_bytes, mime_type, content)
+
+    def commit():
+        # Re-check under a short row lock; exclusive file creation still rejects
+        # a concurrent second upload of the same key.
+        with ctx.db.transaction() as s:
+            m = owned(s, owner, materialId, True)
+            if (
+                m.processing_status != "upload_pending"
+                or m.storage_key != storage_key
+                or m.mime_type != mime_type
+                or m.size_bytes != size_bytes
+            ):
+                err(409, "UPLOAD_CLOSED", "Upload is closed.")
+            ctx.storage.write(storage_key, content)
+
+    await run_in_threadpool(commit)
     return Response(status_code=204)
 
 

@@ -367,3 +367,38 @@ def test_limits_and_deletion_outbox(env):
     with ctx.db.transaction() as s:
         row = s.scalar(select(StorageDeletion))
         assert row.delete_after <= utcnow() and row.delete_after >= before - timedelta(seconds=1)
+
+
+def test_upload_does_not_hold_db_transaction_during_parse(env, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.core import api_error_handler
+    import app.materials as materials
+
+    ctx, user, other, mid, jid = env
+    ctx.auth = SimpleNamespace(authenticate=lambda request: user)
+    app = FastAPI()
+    app.state.context = ctx
+    app.add_exception_handler(ApiError, api_error_handler)
+    app.include_router(materials.router, prefix="/v1")
+    observed = {}
+    original = materials.extract_bytes
+
+    def probing_extract(mime, data):
+        # A pooled connection or open write transaction here would starve other
+        # requests on MySQL and block this concurrent writer on SQLite.
+        observed["checked_out"] = ctx.db.engine.pool.checkedout()
+        with ctx.db.transaction() as s:
+            s.get(Material, mid).updated_at = utcnow()
+        return original(mime, data)
+
+    monkeypatch.setattr(materials, "extract_bytes", probing_extract)
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/materials",
+            headers={"Idempotency-Key": "u" * 16},
+            json={"filename": "new.txt", "mime_type": "text/plain", "size_bytes": 5},
+        )
+        url = response.json()["data"]["upload_url"]
+        assert client.put(url, content=b"hello", headers={"Content-Type": "text/plain"}).status_code == 204
+    assert observed["checked_out"] == 0
