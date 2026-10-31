@@ -250,3 +250,43 @@ def test_mysql_idempotency_key_uses_no_pad_binary_collation():
 
     ddl = str(CreateTable(IdempotencyRequest.__table__).compile(dialect=mysql.dialect()))
     assert "utf8mb4_0900_bin" in ddl
+
+
+def test_db_rejects_unknown_mime_type_and_error_code(context):
+    from app.models import Job
+
+    now = utcnow()
+    base = dict(
+        user_id=context.user,
+        filename="x",
+        size_bytes=1,
+        processing_status="upload_pending",
+        created_at=now,
+        updated_at=now,
+    )
+    with pytest.raises(IntegrityError):
+        with context.db.transaction() as s:
+            s.add(Material(id=uid(), mime_type="text/html", storage_key=uid(), archived=False, **base))
+    with context.db.transaction() as s:
+        s.add(Material(id=uid(), mime_type="text/plain", storage_key=uid(), **base))
+    with pytest.raises(IntegrityError):
+        with context.db.transaction() as s:
+            s.add(
+                Job(
+                    id=uid(),
+                    user_id=context.user,
+                    kind="analysis",
+                    status="failed",
+                    resource_type="material",
+                    resource_id=uid(),
+                    request_fingerprint="a" * 64,
+                    request_payload={},
+                    model_id="m",
+                    attempt_no=1,
+                    retryable=False,
+                    fencing_token=0,
+                    error_code="NOPE",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )

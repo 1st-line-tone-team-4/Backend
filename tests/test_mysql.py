@@ -35,6 +35,7 @@ def mysql_live(tmp_path, monkeypatch):
         "001_mysql_b_baseline.sql",
         "002_mysql_job_operational_columns.sql",
         "003_mysql_active_resource.sql",
+        "004_mysql_fix_final_checks.sql",
     ):
         source = (root / "migrations" / name).read_text(encoding="utf-8")
         clean = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("--"))
