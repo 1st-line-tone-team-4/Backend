@@ -109,7 +109,7 @@ def test_unconfigured_task_gateway_denies():
     gateway = TaskGateway()
     assert gateway.material_in_use(None, "user", "material")
     with pytest.raises(ApiError) as exc:
-        gateway.validate_question_task(None, "user", "task", "unit", [])
+        gateway.validate_question_task(None, "user", "task", "unit", [], count=1)
     assert exc.value.status == 503
 
 

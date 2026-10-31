@@ -157,6 +157,10 @@ def test_complete_content_pipeline_and_a_boundary(live):
         "material": mid,
         "unit": concept["unit_id"],
         "versions": [version["id"]],
+        "task_type": "solve",
+        "target_count": 3,
+        "active_revision": True,
+        "completed_count": 1,
     }
     data = {
         "unit_id": concept["unit_id"],
@@ -166,6 +170,17 @@ def test_complete_content_pipeline_and_a_boundary(live):
         "difficulty": "easy",
         "model_id": MODEL,
     }
+    over_target = post(live, "/v1/question-sets", {**data, "count": 3})
+    assert over_target.status_code == 422
+    assert over_target.json()["error"]["code"] == "TASK_TARGET_EXCEEDED"
+    live.tasks.tasks[task_id]["task_type"] = "teach_back"
+    wrong_type = post(live, "/v1/question-sets", data)
+    assert wrong_type.status_code == 422 and wrong_type.json()["error"]["code"] == "INVALID_TASK_TYPE"
+    live.tasks.tasks[task_id]["task_type"] = "solve"
+    live.tasks.tasks[task_id]["active_revision"] = False
+    stale_task = post(live, "/v1/question-sets", data)
+    assert stale_task.status_code == 409 and stale_task.json()["error"]["code"] == "STALE_TASK"
+    live.tasks.tasks[task_id]["active_revision"] = True
     response = post(live, "/v1/question-sets", data)
     assert response.status_code == 202, response.text
     validate(response, "/question-sets", "post")
@@ -219,6 +234,7 @@ def test_complete_content_pipeline_and_a_boundary(live):
         denied = live.client.get(path, headers=OTHER)
         assert denied.status_code == 404, denied.text
     assert live.tasks.progress_writes == 0
+    assert live.tasks.tasks[task_id]["completed_count"] == 1
     assert live.client.delete(f"/v1/materials/{mid}").status_code == 409
     assert live.client.patch(f"/v1/materials/{mid}", json={"archived": True}).status_code == 200
     assert live.client.get(f"/v1/learning-explanations/{eid}").status_code == 200
@@ -332,9 +348,8 @@ def test_durable_job_executes_in_separate_worker_process(live):
     assert live.provider.calls == []
 
 
-def test_possible_duplicate_cost_clears_after_restart_succeeds(live):
-    from app.providers import ProviderFailure
-
+@pytest.mark.parametrize("successor_status", ["queued", "running", "succeeded", "failed", "outcome_unknown"])
+def test_unknown_cost_ack_survives_every_successor_state(live, successor_status):
     mid, concept, version = confirmed(live)
     data = {
         "unit_id": concept["unit_id"],
@@ -356,9 +371,39 @@ def test_possible_duplicate_cost_clears_after_restart_succeeds(live):
         {"model_id": MODEL, "acknowledge_possible_duplicate_cost": True},
     )
     assert restarted.status_code == 202, restarted.text
-    assert live.ctx.jobs.run_once()
+    successor_id = restarted.json()["data"]["job"]["id"]
+    if successor_status == "running":
+        assert live.ctx.jobs._claim()[0] == successor_id
+    elif successor_status != "queued":
+        if successor_status == "failed":
+            live.provider.fail_next = ProviderFailure("PROVIDER_AUTH", retryable=True)
+        elif successor_status == "outcome_unknown":
+            live.provider.fail_next = ProviderFailure("TIMEOUT_UNKNOWN", outcome_unknown=True)
+        assert live.ctx.jobs.run_once()
+    with live.ctx.db.transaction() as s:
+        assert s.get(Job, job_id).status == "outcome_unknown"
+        assert s.get(Job, successor_id).status == successor_status
+    calls_before = len(live.provider.calls)
     again = post(live, "/v1/question-sets", data)
-    assert again.status_code == 202, again.text
+    active = successor_status in ("queued", "running")
+    assert again.status_code == 409, again.text
+    assert again.json()["error"]["code"] == ("JOB_IN_PROGRESS" if active else "POSSIBLE_DUPLICATE_COST")
+    assert len(live.provider.calls) == calls_before
+    if successor_status == "outcome_unknown":
+        chained = post(
+            live,
+            f"/v1/jobs/{successor_id}/restart",
+            {"model_id": MODEL, "acknowledge_possible_duplicate_cost": True},
+        )
+        assert chained.status_code == 202, chained.text
+        assert live.ctx.jobs.run_once()
+        with live.ctx.db.transaction() as s:
+            assert s.get(Job, chained.json()["data"]["job"]["id"]).status == "succeeded"
+        after_chain = post(live, "/v1/question-sets", data)
+        assert after_chain.status_code == 409
+        assert after_chain.json()["error"]["code"] == "POSSIBLE_DUPLICATE_COST"
+    acknowledged = post(live, "/v1/question-sets", {**data, "acknowledge_possible_duplicate_cost": True})
+    assert acknowledged.status_code == (409 if active else 202), acknowledged.text
 
 
 def test_task_pinned_to_older_confirmed_version_can_still_generate(live):
@@ -382,6 +427,10 @@ def test_task_pinned_to_older_confirmed_version_can_still_generate(live):
         "material": mid,
         "unit": concept["unit_id"],
         "versions": [v1["id"]],
+        "task_type": "solve",
+        "target_count": 1,
+        "active_revision": True,
+        "completed_count": 0,
     }
     data = {
         "unit_id": concept["unit_id"],
@@ -394,3 +443,38 @@ def test_task_pinned_to_older_confirmed_version_can_still_generate(live):
     assert stale.status_code == 422 and stale.json()["error"]["code"] == "CONCEPT_NOT_CONFIRMED"
     pinned = post(live, "/v1/question-sets", {**data, "task_id": task_id})
     assert pinned.status_code == 202, pinned.text
+    assert live.ctx.jobs.run_once()
+    set_id = pinned.json()["data"]["job"]["resource_id"]
+    generated = live.client.get(f"/v1/question-sets/{set_id}").json()["data"]
+    assert generated["status"] == "ready"
+    assert generated["items"][0]["question"]["concept_version_ids"] == [v1["id"]]
+
+
+def test_padded_ai_title_is_known_invalid_output_without_partial_content(live, monkeypatch):
+    _, _, version = confirmed(live)
+    generate = live.provider.generate
+
+    def padded(*args):
+        output = generate(*args)
+        output["title"] = "x" + " " * 200
+        return output
+
+    monkeypatch.setattr(live.provider, "generate", padded)
+    response = post(
+        live,
+        "/v1/learning-explanations",
+        {
+            "concept_version_id": version["id"],
+            "explanation_language": "ko",
+            "model_id": MODEL,
+        },
+    )
+    assert response.status_code == 202
+    job = response.json()["data"]["job"]
+    assert live.ctx.jobs.run_once()
+    with live.ctx.db.transaction() as s:
+        row = s.get(Job, job["id"])
+        assert (row.status, row.error_code, row.retryable) == ("failed", "INVALID_OUTPUT", False)
+        assert row.credential_ref is None
+    result = live.client.get("/v1/learning-explanations/" + job["resource_id"]).json()["data"]
+    assert result["status"] == "failed" and result["content"] is None
