@@ -589,7 +589,8 @@ def test_anthropic_non_generating_validation_and_multimodal_request():
     def respond(request):
         calls.append(request)
         assert request.url.host == "api.anthropic.com"
-        assert request.headers["authorization"] == "Bearer " + KEY
+        assert request.headers["x-api-key"] == KEY
+        assert "authorization" not in request.headers
         assert request.headers["anthropic-version"] == "2026-10-21"
         if request.method == "GET":
             assert request.url.path == "/v1/models/claude-haiku-5-5"
