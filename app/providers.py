@@ -67,9 +67,13 @@ class ProviderRegistry:
     async def _exchange(self, method, url, key, body, max_bytes, provider):
         # Bound the whole response before JSON parsing. No redirects or
         # environment proxies: neither may redirect the BYOK credential.
-        headers = {"Authorization": f"Bearer {key}", "Accept-Encoding": "identity"}
+        headers = {"Accept-Encoding": "identity"}
         if provider == "anthropic":
+            # Anthropic API keys use x-api-key; Bearer is only for OAuth access tokens.
+            headers["x-api-key"] = key
             headers["anthropic-version"] = self.ANTHROPIC_VERSION
+        else:
+            headers["Authorization"] = f"Bearer {key}"
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(60, connect=10),
             follow_redirects=False,
