@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.dialects.mysql import LONGTEXT, DATETIME, CHAR
@@ -94,6 +95,12 @@ class Job(Base):
         CheckConstraint("attempt_no BETWEEN 1 AND 3"),
         CheckConstraint("fencing_token >= 0"),
         CheckConstraint("status = 'failed' OR retryable = FALSE"),
+        CheckConstraint(
+            "error_code IS NULL OR error_code IN ('CREDENTIAL_EXPIRED', 'PROVIDER_AUTH', "
+            "'PROVIDER_RATE_LIMIT', 'PROVIDER_UNAVAILABLE', 'INVALID_OUTPUT', 'TIMEOUT_UNKNOWN', "
+            "'INTERNAL_ERROR')",
+            name="ck_ai_jobs_error_code",
+        ),
     )
 
 
@@ -107,12 +114,16 @@ class Material(Base):
     storage_key = Column(String(512), nullable=False)
     processing_status = Column(String(32), nullable=False)
     page_count = Column(Integer)
-    archived = Column(Boolean, nullable=False, default=False)
+    archived = Column(Boolean, nullable=False, default=False, server_default=false())
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)
     latest_job_id = Column(UUIDString)
     __table_args__ = (
         CheckConstraint("processing_status IN ('upload_pending', 'queued', 'processing', 'ready', 'failed')"),
+        CheckConstraint(
+            "mime_type IN ('application/pdf', 'text/plain', 'image/png', 'image/jpeg')",
+            name="ck_materials_mime_type",
+        ),
         UniqueConstraint("storage_key"),
         ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="RESTRICT", onupdate="RESTRICT"),
         ForeignKeyConstraint(["latest_job_id"], ["ai_jobs.id"], ondelete="RESTRICT", onupdate="RESTRICT"),

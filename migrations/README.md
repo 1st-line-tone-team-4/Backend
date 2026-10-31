@@ -18,7 +18,7 @@ migration. Never overwrite existing A tables.
 after the baseline. They track dispatch, an opaque credential reference, and the
 last poll; no raw credentials are stored. Do not apply it twice or blindly apply
 it to an existing shared jobs table. MySQL DDL can implicitly commit; back up and
-prepare a tested recovery plan before any rollout. Migration ordering is 001, 002, then 003. The third migration enforces one
+prepare a tested recovery plan before any rollout. Migration ordering is 001, 002, 003, then 004. The third migration enforces one
 queued or running job per resource type and ID, independent of fingerprint. This repository does not provide an automatic production migration runner.
 
 The baseline uses `utf8mb4_bin` for case-sensitive strings, with `utf8mb4_0900_bin`
@@ -33,3 +33,8 @@ The default task gateway's attempt reader returns an empty dictionary to mean no
 attempts are known to standalone B. It does not establish authoritative A
 progress. Once A is connected, replace it with an owner- and set-scoped adapter
 returning each question's latest attempt and whether any attempt was graded.
+
+`004_mysql_fix_final_checks.sql` adds the CHECK constraints from the team's
+`erd-fix-final.sql` (F4) for `materials.mime_type` and `ai_jobs.error_code`, and
+the contract's `DEFAULT FALSE` on `materials.archived`. It fails on existing rows
+that violate the checks; inspect data before applying it to a non-empty database.
