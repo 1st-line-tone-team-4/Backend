@@ -26,8 +26,9 @@ The baseline uses `utf8mb4_bin` for case-sensitive strings, with `utf8mb4_0900_b
 and `LONGTEXT` where the proposal specifies it. MySQL deployment requires an
 explicit review of collation compatibility, existing A
 foreign key types and collations, server version and SQL mode, generated-column
-and check behavior, migration/rollback, concurrency and indexes. Compilation is
-not execution: no MySQL server, production migration, or deployment was tested.
+and check behavior, migration/rollback, concurrency and indexes. CI executes the
+migrations and HTTP pipeline on a disposable MySQL 8.0 service. This does not
+verify the real A schema, production rollout, or all MySQL concurrency races.
 
 The default task gateway's attempt reader returns an empty dictionary to mean no
 attempts are known to standalone B. It does not establish authoritative A
