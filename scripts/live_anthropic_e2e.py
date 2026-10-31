@@ -6,12 +6,11 @@ adapter replaces the normal encrypted vault for this narrowly scoped test.
 """
 
 import argparse
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import io
 import json
 import os
 from pathlib import Path
-import re
 import tempfile
 import threading
 import time
@@ -22,7 +21,8 @@ from sqlalchemy import select
 
 from app.core import ApiError, Settings, uid
 from app.models import Job
-from app.providers import ProviderFailure, ProviderRegistry
+from app.providers import ProviderFailure, ProviderRegistry, strict_json
+from scripts.credential_input import CredentialInputError, MAX_INPUT_BYTES, parse_credential_bytes
 from tests.support import test_application as make_test_application
 
 MODEL = "anthropic:claude-haiku-5-5"
@@ -43,31 +43,86 @@ class Ledger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = self.path.with_suffix(self.path.suffix + ".lock")
         self.lock_fd = os.open(self.lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        self.lock_owned = True
         self.mutex = threading.Lock()
-        self.data = (
-            json.loads(self.path.read_text(encoding="utf-8"))
-            if self.path.exists()
-            else {"model": MODEL, "budget_usd": "10", "entries": [], "runs": []}
-        )
-        if self.data["model"] != MODEL or self.data["budget_usd"] != "10":
-            raise ValueError("Ledger configuration mismatch")
-        if any(x["status"] in ("reserved", "outcome_unknown") for x in self.data["entries"]):
-            raise ValueError("Prior outcome uncertain; no automatic repeat permitted")
         self.active = None
+        self.write_failed = False
+        try:
+            self.data = self._load()
+            self._validate()
+        except BaseException:
+            self.close()
+            raise
+
+    def _load(self):
+        if not self.path.exists():
+            return {"model": MODEL, "budget_usd": "10", "entries": [], "runs": []}
+        try:
+            return strict_json(self.path.read_text(encoding="utf-8"))
+        except (ValueError, UnicodeError):
+            pass
+        raise ValueError("LEDGER_INVALID")
+
+    def _validate(self):
+        if (
+            not isinstance(self.data, dict)
+            or self.data.get("model") != MODEL
+            or self.data.get("budget_usd") != "10"
+            or not isinstance(self.data.get("entries"), list)
+            or not isinstance(self.data.get("runs"), list)
+        ):
+            raise ValueError("LEDGER_INVALID")
+        entries = self.data["entries"]
+        reserved = Decimal(0)
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict) or entry.get("number") != index + 1:
+                raise ValueError("LEDGER_INVALID")
+            if entry.get("status") in ("reserved", "outcome_unknown", "TIMEOUT_UNKNOWN"):
+                raise ValueError("LEDGER_OUTCOME_UNKNOWN")
+            if entry.get("status") not in {
+                "response_received",
+                "PROVIDER_AUTH",
+                "PROVIDER_RATE_LIMIT",
+                "PROVIDER_UNAVAILABLE",
+                "INVALID_OUTPUT",
+            }:
+                raise ValueError("LEDGER_INVALID")
+            try:
+                amount = Decimal(entry["reserved_usd"])
+            except (KeyError, TypeError, ValueError, InvalidOperation):
+                raise ValueError("LEDGER_INVALID") from None
+            if not amount.is_finite() or amount < RESERVATION:
+                raise ValueError("LEDGER_INVALID")
+            reserved += amount
+        if len(entries) > MAX_CALLS or reserved > MAX_BUDGET:
+            raise ValueError("LEDGER_INVALID")
 
     def write(self):
+        if self.lock_fd is None:
+            raise ValueError("LEDGER_CLOSED")
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-        with temporary.open("w", encoding="utf-8") as handle:
-            handle.write(json.dumps(self.data, indent=2))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, self.path)
+        try:
+            with temporary.open("w", encoding="utf-8") as handle:
+                handle.write(json.dumps(self.data, indent=2))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+        except BaseException:
+            self.write_failed = True
+            temporary.unlink(missing_ok=True)
+            raise
 
     def reserve(self, kind):
         with self.mutex:
             entries = self.data["entries"]
             reserved = sum((Decimal(x["reserved_usd"]) for x in entries), Decimal(0))
-            if len(entries) >= MAX_CALLS or reserved + RESERVATION > MAX_BUDGET:
+            if (
+                self.write_failed
+                or self.lock_fd is None
+                or any(x["status"] in ("reserved", "outcome_unknown", "TIMEOUT_UNKNOWN") for x in entries)
+                or len(entries) >= MAX_CALLS
+                or reserved + RESERVATION > MAX_BUDGET
+            ):
                 raise ProviderFailure("PROVIDER_UNAVAILABLE")
             self.active = len(entries)
             entries.append(
@@ -105,8 +160,16 @@ class Ledger:
             self.write()
 
     def close(self):
-        os.close(self.lock_fd)
-        self.lock.unlink()
+        if self.lock_fd is None and not self.lock_owned:
+            return
+        fd, self.lock_fd = self.lock_fd, None
+        try:
+            if fd is not None:
+                os.close(fd)
+        finally:
+            if self.lock_owned:
+                self.lock.unlink(missing_ok=True)
+                self.lock_owned = False
 
 
 class MemoryCredentials:
@@ -177,115 +240,125 @@ class BudgetProvider:
 
 
 def execute(key, ledger, directory):
-    fixture = make_test_application(directory)
-    ctx = fixture.ctx
-    ctx.credentials = MemoryCredentials()
-    ctx.providers = BudgetProvider(ledger)
-    ctx.providers.validate_key(MODEL, key)
-    report = {
-        "model": MODEL,
-        "stages": [],
-        "real_key_persistence": False,
-        "source": "synthetic text and generated image",
-    }
-    with TestClient(fixture.app) as client:
-        client.headers["Authorization"] = "Bearer test-owner-token"
+    ctx = None
+    credentials = MemoryCredentials()
+    try:
+        fixture = make_test_application(directory)
+        ctx = fixture.ctx
+        ctx.credentials = credentials
+        ctx.providers = BudgetProvider(ledger)
+        ctx.providers.validate_key(MODEL, key)
+        report = {
+            "model": MODEL,
+            "stages": [],
+            "real_key_persistence": False,
+            "source": "synthetic text and generated image",
+        }
+        with TestClient(fixture.app) as client:
+            client.headers["Authorization"] = "Bearer test-owner-token"
 
-        def post(path, data):
-            response = client.post(path, json=data, headers={"Idempotency-Key": uid(), "X-AI-Key": key})
-            if response.status_code not in (201, 202):
-                raise RuntimeError(
-                    "Request failed at " + path.split("/")[2] + " status=" + str(response.status_code)
+            def post(path, data):
+                response = client.post(path, json=data, headers={"Idempotency-Key": uid(), "X-AI-Key": key})
+                if response.status_code not in (201, 202):
+                    raise RuntimeError(
+                        "Request failed at " + path.split("/")[2] + " status=" + str(response.status_code)
+                    )
+                return response.json()["data"]
+
+            def run(job):
+                ctx.jobs.run_once()
+                with ctx.db.transaction() as s:
+                    row = s.get(Job, job["id"])
+                    report["stages"].append(
+                        {"kind": row.kind, "status": row.status, "error_code": row.error_code}
+                    )
+                    if row.status != "succeeded":
+                        raise RuntimeError("Job " + row.kind + " failed: " + str(row.error_code))
+
+            def material(name, mime, data):
+                created = post(
+                    "/v1/materials", {"filename": name, "mime_type": mime, "size_bytes": len(data)}
                 )
-            return response.json()["data"]
+                response = client.put(created["upload_url"], content=data, headers={"Content-Type": mime})
+                if response.status_code != 204:
+                    raise RuntimeError("Synthetic upload rejected")
+                mid = created["material"]["id"]
+                run(post(f"/v1/materials/{mid}/complete", {"model_id": MODEL})["job"])
+                return mid
 
-        def run(job):
-            ctx.jobs.run_once()
-            with ctx.db.transaction() as s:
-                row = s.get(Job, job["id"])
-                report["stages"].append(
-                    {"kind": row.kind, "status": row.status, "error_code": row.error_code}
-                )
-                if row.status != "succeeded":
-                    raise RuntimeError("Job " + row.kind + " failed: " + str(row.error_code))
-
-        def material(name, mime, data):
-            created = post("/v1/materials", {"filename": name, "mime_type": mime, "size_bytes": len(data)})
-            response = client.put(created["upload_url"], content=data, headers={"Content-Type": mime})
-            if response.status_code != 204:
-                raise RuntimeError("Synthetic upload rejected")
-            mid = created["material"]["id"]
-            run(post(f"/v1/materials/{mid}/complete", {"model_id": MODEL})["job"])
-            return mid
-
-        mid = material("synthetic-physics.txt", "text/plain", SOURCE.encode())
-        concepts = client.get(f"/v1/materials/{mid}/concepts").json()["data"]
-        if not concepts:
-            raise RuntimeError("Analysis produced no concepts")
-        concept, draft = concepts[0], concepts[0]["current_version"]
-        response = client.patch(
-            f"/v1/materials/{mid}/concepts",
-            json={
-                "concepts": [
-                    {
-                        "concept_id": concept["concept_id"],
-                        "unit_id": concept["unit_id"],
-                        "base_version_id": draft["id"],
-                        "name": draft["name"],
-                        "summary": draft["summary"],
-                        "checklist_items": [x["criterion"] for x in draft["checklist_items"]],
-                        "evidence_chunk_ids": [x["chunk_id"] for x in draft["evidence"]],
-                    }
-                ]
-            },
-        )
-        if response.status_code != 200:
-            raise RuntimeError("Confirmed version failed")
-        vid = response.json()["data"][0]["version"]["id"]
-        job = post(
-            "/v1/question-sets",
-            {
-                "unit_id": concept["unit_id"],
-                "concept_version_ids": [vid],
-                "count": 2,
-                "difficulty": "easy",
-                "model_id": MODEL,
-            },
-        )["job"]
-        run(job)
-        questions = client.get("/v1/question-sets/" + job["resource_id"]).json()["data"]["items"]
-        if len(questions) != 2 or any("answer_key" in x["question"] for x in questions):
-            raise RuntimeError("Public question shape failed")
-        job = post(
-            "/v1/learning-explanations",
-            {"concept_version_id": vid, "explanation_language": "ko", "model_id": MODEL},
-        )["job"]
-        run(job)
-        explanation = client.get("/v1/learning-explanations/" + job["resource_id"]).json()["data"]
-        if not explanation["content"] or explanation["concept_version_id"] != vid:
-            raise RuntimeError("Explanation pin failed")
-        image = Image.new("RGB", (800, 160), "white")
-        ImageDraw.Draw(image).text(
-            (20, 30),
-            "Momentum equals mass times velocity.\nTotal momentum is conserved with zero external force.",
-            fill="black",
-            font_size=24,
-        )
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        material("synthetic-physics.png", "image/png", buffer.getvalue())
-    if ctx.credentials.items:
-        raise RuntimeError("Live memory credentials were not cleaned")
-    with ctx.db.transaction() as s:
-        if any(x.credential_ref is not None for x in s.scalars(select(Job))):
-            raise RuntimeError("Live job credential references remained")
-    # Check every temporary artifact before cleanup; never emit key or matching data.
-    for path in directory.rglob("*"):
-        if path.is_file() and key.encode() in path.read_bytes():
-            raise RuntimeError("Key persistence verification failed")
-    ctx.db.engine.dispose()
-    report["status"] = "pass"
-    return report
+            mid = material("synthetic-physics.txt", "text/plain", SOURCE.encode())
+            concepts = client.get(f"/v1/materials/{mid}/concepts").json()["data"]
+            if not concepts:
+                raise RuntimeError("Analysis produced no concepts")
+            concept, draft = concepts[0], concepts[0]["current_version"]
+            response = client.patch(
+                f"/v1/materials/{mid}/concepts",
+                json={
+                    "concepts": [
+                        {
+                            "concept_id": concept["concept_id"],
+                            "unit_id": concept["unit_id"],
+                            "base_version_id": draft["id"],
+                            "name": draft["name"],
+                            "summary": draft["summary"],
+                            "checklist_items": [x["criterion"] for x in draft["checklist_items"]],
+                            "evidence_chunk_ids": [x["chunk_id"] for x in draft["evidence"]],
+                        }
+                    ]
+                },
+            )
+            if response.status_code != 200:
+                raise RuntimeError("Confirmed version failed")
+            vid = response.json()["data"][0]["version"]["id"]
+            job = post(
+                "/v1/question-sets",
+                {
+                    "unit_id": concept["unit_id"],
+                    "concept_version_ids": [vid],
+                    "count": 2,
+                    "difficulty": "easy",
+                    "model_id": MODEL,
+                },
+            )["job"]
+            run(job)
+            questions = client.get("/v1/question-sets/" + job["resource_id"]).json()["data"]["items"]
+            if len(questions) != 2 or any("answer_key" in x["question"] for x in questions):
+                raise RuntimeError("Public question shape failed")
+            job = post(
+                "/v1/learning-explanations",
+                {"concept_version_id": vid, "explanation_language": "ko", "model_id": MODEL},
+            )["job"]
+            run(job)
+            explanation = client.get("/v1/learning-explanations/" + job["resource_id"]).json()["data"]
+            if not explanation["content"] or explanation["concept_version_id"] != vid:
+                raise RuntimeError("Explanation pin failed")
+            image = Image.new("RGB", (800, 160), "white")
+            ImageDraw.Draw(image).text(
+                (20, 30),
+                "Momentum equals mass times velocity.\nTotal momentum is conserved with zero external force.",
+                fill="black",
+                font_size=24,
+            )
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            material("synthetic-physics.png", "image/png", buffer.getvalue())
+        if ctx.credentials.items:
+            raise RuntimeError("Live memory credentials were not cleaned")
+        with ctx.db.transaction() as s:
+            if any(x.credential_ref is not None for x in s.scalars(select(Job))):
+                raise RuntimeError("Live job credential references remained")
+        # Check every temporary artifact before cleanup; never emit key or matching data.
+        for path in directory.rglob("*"):
+            if path.is_file() and key.encode() in path.read_bytes():
+                raise RuntimeError("Key persistence verification failed")
+        report["status"] = "pass"
+        return report
+    finally:
+        # Clearing the captured variable also clears nested request closures.
+        key = None
+        credentials.items.clear()
+        if ctx is not None:
+            ctx.db.engine.dispose()
 
 
 def main(argv=None):
@@ -295,29 +368,60 @@ def main(argv=None):
     parser.add_argument("--key-file", required=True)
     parser.add_argument("--ledger", required=True)
     args = parser.parse_args(argv)
-    ledger = Ledger(args.ledger)
+    ledger = None
     key = None
     report = {"status": "failed", "model": MODEL}
     try:
-        key = Path(args.key_file).read_text(encoding="utf-8-sig").strip()
-        if not re.fullmatch(r"sk-ant-api[0-9A-Za-z_-]+", key) or len(key) > 512:
-            report["error"] = "DIRECT_ANTHROPIC_KEY_NOT_CONFIRMED_NO_REQUEST"
-            raise ValueError("Credential preflight rejected")
+        ledger = Ledger(args.ledger)
+        with Path(args.key_file).open("rb") as handle:
+            key = parse_credential_bytes(handle.read(MAX_INPUT_BYTES + 1))
         with tempfile.TemporaryDirectory(prefix="backend-live-") as temporary:
             report = execute(key, ledger, Path(temporary))
+    except CredentialInputError:
+        report["error"] = "CREDENTIAL_INPUT_INVALID"
     except (ValueError, RuntimeError, ApiError, ProviderFailure) as exc:
-        if "error" not in report:
-            report["error"] = (
-                exc.code if isinstance(exc, (ApiError, ProviderFailure)) else "LIVE_CHECK_FAILED"
-            )
+        # No raw exceptions, arbitrary messages, or provider response data.
+        allowed_codes = {
+            "PROVIDER_AUTH",
+            "PROVIDER_RATE_LIMIT",
+            "PROVIDER_UNAVAILABLE",
+            "KEY_VALIDATION_UNAVAILABLE",
+            "MODEL_UNAVAILABLE",
+            "TIMEOUT_UNKNOWN",
+            "INVALID_OUTPUT",
+        }
+        code = exc.code if isinstance(exc, (ApiError, ProviderFailure)) else None
+        report["error"] = code if code in allowed_codes else "LIVE_CHECK_FAILED"
     except Exception:
-        report["error"] = "Live test failed; no exception details emitted"
+        report["error"] = "LIVE_CHECK_FAILED"
     finally:
         key = None
-        ledger.data["runs"].append(report)
-        ledger.write()
-        ledger.close()
-    print(json.dumps({"report": report, "ledger": ledger.data}, ensure_ascii=True))
+        if ledger is not None:
+            try:
+                ledger.data["runs"].append(report)
+                ledger.write()
+            except Exception:
+                report["status"] = "failed"
+                report["error"] = "LEDGER_WRITE_FAILED"
+            finally:
+                try:
+                    ledger.close()
+                except Exception:
+                    report["status"] = "failed"
+                    report["error"] = "LEDGER_CLOSE_FAILED"
+    # Existing ledger metadata is operator-controlled; never echo it wholesale.
+    summary = (
+        None
+        if ledger is None
+        else {
+            "budget_usd": str(MAX_BUDGET),
+            "generation_calls": len(ledger.data["entries"]),
+            "reserved_usd": str(
+                sum((Decimal(x["reserved_usd"]) for x in ledger.data["entries"]), Decimal(0))
+            ),
+        }
+    )
+    print(json.dumps({"report": report, "ledger": summary}, ensure_ascii=True))
     return 0 if report["status"] == "pass" else 1
 
 

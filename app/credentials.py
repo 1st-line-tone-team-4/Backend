@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import base64
+from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
 import time
@@ -52,10 +53,15 @@ class Credentials:
         if os.name != "nt":
             self.path.chmod(0o600)
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(str(self.path), timeout=5)
-        db.execute("PRAGMA secure_delete=ON")
-        return db
+        try:
+            with db:
+                db.execute("PRAGMA secure_delete=ON")
+                yield db
+        finally:
+            db.close()
 
     def purge(self):
         with self._connect() as db:
