@@ -330,3 +330,32 @@ def test_durable_job_executes_in_separate_worker_process(live):
     assert response.json()["data"]["status"] == "succeeded", response.text
     assert live.client.get(f"/v1/materials/{mid}").json()["data"]["processing_status"] == "ready"
     assert live.provider.calls == []
+
+
+def test_possible_duplicate_cost_clears_after_restart_succeeds(live):
+    from app.providers import ProviderFailure
+
+    mid, concept, version = confirmed(live)
+    data = {
+        "unit_id": concept["unit_id"],
+        "concept_version_ids": [version["id"]],
+        "count": 1,
+        "difficulty": "easy",
+        "model_id": MODEL,
+    }
+    response = post(live, "/v1/question-sets", data)
+    assert response.status_code == 202, response.text
+    job_id = response.json()["data"]["job"]["id"]
+    live.provider.fail_next = ProviderFailure("TIMEOUT_UNKNOWN", outcome_unknown=True)
+    assert live.ctx.jobs.run_once()
+    blocked = post(live, "/v1/question-sets", data)
+    assert blocked.status_code == 409 and blocked.json()["error"]["code"] == "POSSIBLE_DUPLICATE_COST"
+    restarted = post(
+        live,
+        f"/v1/jobs/{job_id}/restart",
+        {"model_id": MODEL, "acknowledge_possible_duplicate_cost": True},
+    )
+    assert restarted.status_code == 202, restarted.text
+    assert live.ctx.jobs.run_once()
+    again = post(live, "/v1/question-sets", data)
+    assert again.status_code == 202, again.text
