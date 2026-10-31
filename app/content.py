@@ -257,7 +257,10 @@ def create_set(
             missing()
         if material.archived or material.processing_status != "ready":
             raise ApiError(422, "MATERIAL_NOT_READY", "Material is not available for generation.")
-        versions = [_version(session, user, v, True) for v in vids]
+        # A plan task pins the exact confirmed versions it was planned with, so a
+        # later re-confirmation must not block its practice set. Without a task,
+        # only the current confirmed version may be used.
+        versions = [_version(session, user, v, not data["task_id"]) for v in vids]
         concepts = [session.get(Concept, v.concept_id) for v in versions]
         if any(c.unit_id != unit.id for c in concepts) or len({c.id for c in concepts}) != len(concepts):
             raise ApiError(422, "INVALID_CONCEPT_VERSION", "Versions must belong to the selected unit.")

@@ -359,3 +359,38 @@ def test_possible_duplicate_cost_clears_after_restart_succeeds(live):
     assert live.ctx.jobs.run_once()
     again = post(live, "/v1/question-sets", data)
     assert again.status_code == 202, again.text
+
+
+def test_task_pinned_to_older_confirmed_version_can_still_generate(live):
+    mid, concept, v1 = confirmed(live)
+    item = {
+        "concept_id": concept["concept_id"],
+        "unit_id": concept["unit_id"],
+        "base_version_id": v1["id"],
+        "name": v1["name"],
+        "summary": v1["summary"] + " (revised)",
+        "checklist_items": [x["criterion"] for x in v1["checklist_items"]],
+        "evidence_chunk_ids": [x["chunk_id"] for x in v1["evidence"]],
+    }
+    response = live.client.patch(f"/v1/materials/{mid}/concepts", json={"concepts": [item]})
+    assert response.status_code == 200, response.text
+    task_id = uid()
+    with live.ctx.db.transaction() as s:
+        s.add(PlanTask(id=task_id))
+    live.tasks.tasks[task_id] = {
+        "owner": live.auth.tokens["test-owner-token"],
+        "material": mid,
+        "unit": concept["unit_id"],
+        "versions": [v1["id"]],
+    }
+    data = {
+        "unit_id": concept["unit_id"],
+        "concept_version_ids": [v1["id"]],
+        "count": 1,
+        "difficulty": "easy",
+        "model_id": MODEL,
+    }
+    stale = post(live, "/v1/question-sets", data)
+    assert stale.status_code == 422 and stale.json()["error"]["code"] == "CONCEPT_NOT_CONFIRMED"
+    pinned = post(live, "/v1/question-sets", {**data, "task_id": task_id})
+    assert pinned.status_code == 202, pinned.text
