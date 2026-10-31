@@ -277,7 +277,16 @@ def create_set(
             if prior.request_payload == payload:
                 if prior.status in ("queued", "running"):
                     raise ApiError(409, "JOB_IN_PROGRESS", "A matching job is already active.")
-                if not data["acknowledge_possible_duplicate_cost"]:
+                # An unknown outcome stops mattering once it was explicitly
+                # restarted or its set was later completed.
+                resolved = session.scalar(
+                    select(Job.id).where(Job.previous_job_id == prior.id)
+                ) or session.scalar(
+                    select(QuestionSet.id).where(
+                        QuestionSet.id == prior.resource_id, QuestionSet.status == "ready"
+                    )
+                )
+                if not resolved and not data["acknowledge_possible_duplicate_cost"]:
                     raise ApiError(409, "POSSIBLE_DUPLICATE_COST", "The previous outcome is unknown.")
         job = ctx.jobs.enqueue(
             session,
