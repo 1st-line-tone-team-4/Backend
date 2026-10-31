@@ -60,12 +60,21 @@ worker는 DB 조건부 claim, lease/fencing, 활성 resource/fingerprint 유일 
 
 ## 검증 경계와 구현 차이
 
-- 실제 OpenAI fixed-endpoint 어댑터가 있으며 allowlist에 명시한 `openai:<model>`만 호출합니다. 기본 활성 모델은 없습니다. 모델의 JSON/multimodal 지원과 실제 과금·품질은 live 확인 전까지 미검증입니다. `GET /models/{model}` 키 검사는 생성을 호출하지 않습니다.
+- 실제 OpenAI 및 Anthropic fixed-endpoint 어댑터가 있으며 allowlist의 `openai:<model>` 또는 `anthropic:<model>`만 호출합니다. 기본 활성 모델은 없습니다. Anthropic은 공식 Messages API `2026-10-21`과 Bearer 인증을 사용합니다. 모델의 JSON/multimodal 지원과 실제 과금·품질은 live 확인 전까지 미검증입니다. `GET /models/{model}` 키 검사는 생성을 호출하지 않습니다. 생성은 엄격한 JSON 파싱과 도메인 검증을 통과해야 하며 provider의 constrained-schema mode를 사용한다고 주장하지 않습니다.
 - TXT는 UTF-8, PDF는 pypdf, PNG/JPEG는 Pillow 검증 후 실제 image data를 provider에 전달합니다. 이미지 OCR은 AI가 반환한 전사문을 근거로 쓰고 사람의 개념 확정을 요구합니다. substring/ID 검증은 OCR의 의미 정확성을 보증하지 않습니다. 텍스트 없는 스캔 PDF는 현재 거부됩니다.
 - 원계약 20MiB/200페이지 외에 파서 안전 한도를 추가했습니다: 추출 UTF-8 120,000 bytes, 이미지 40M pixels, 파서 subprocess 20초·프로세스당 동시 2개, PDF 개별 압축해제 8MiB. 초과는 422, 처리 슬롯 부족은 503입니다. POSIX 메모리 1GiB 제한, Windows 768MiB 감시는 best effort이므로 운영 OS/container 제한도 필요합니다. 유효한 대형 파일도 거부될 수 있으며 모든 모델의 context 크기에 맞는다고 보장하지 않습니다.
 - provider 응답 2MiB, completion 최대 16,384 tokens, 총 요청 제한 시간을 적용합니다. 모델별 지원/더 작은 context는 운영 allowlist 설정 시 확인해야 합니다.
 - SQLite 개발 모델과 MySQL migration에 `dispatched_at`, `credential_ref`, `last_polled_at`, `active_resource_id`를 추가했습니다. 원 SQL과 차이는 migration 문서에 기록했습니다. 원 계약 전체 DDL은 참고본이며 자동 실행하지 않습니다.
-- `.github/workflows/backend-b.yml`은 Linux SQLite 회귀 및 새 MySQL 8.0 service에서 migration+HTTP E2E를 실행하도록 구성했습니다. 실행 결과는 해당 commit CI를 확인해야 합니다. `TEST_MYSQL_URL`이 없으면 로컬 MySQL 테스트는 명시적으로 skip됩니다.
+- 분석 청크 ID는 같은 job의 재시도에서 안정적으로 재사용하기 위해 job UUID로부터 UUIDv5로 유도합니다. 다른 리소스 ID는 UUIDv4입니다. OpenAPI의 `format: uuid`에는 맞지만 서술형 계약의 일괄 UUIDv4 기본값과는 다른 내부 선택입니다.
+- `.github/workflows/backend-b.yml`은 Linux SQLite 회귀 및 새 MySQL 8.0 service에서 migration+HTTP E2E를 실행합니다. 최초 구현 SHA `259675314c0cf2bb7e4d7120e4206d4907451578`의 [CI에서 두 경로 모두 통과](https://github.com/1st-line-tone-team-4/Backend/actions/runs/41216673636)했습니다. 이후 변경은 해당 SHA의 CI 결과로 확인합니다. `TEST_MYSQL_URL`이 없으면 로컬 MySQL 테스트는 명시적으로 skip됩니다. 실제 A 스키마/운영 DB에 적용한 검증은 아닙니다.
+
+## 승인된 실제 모델 시험 도구
+
+`scripts/live_anthropic_e2e.py`는 별도 승인된 합성 자료 시험 전용입니다. 기본 pytest/CI에서 실행되지 않습니다. 직접 Anthropic API 키로 확인된 지정 파일만 읽고, 실제 키는 메모리 adapter로 처리해 vault/DB/로그/Git에 저장하지 않습니다. 파일 자체를 이동/삭제하지 않습니다.
+
+선정 모델은 `claude-haiku-5-5`, 출력·추론 합계 상한은 호출당 4,096 tokens입니다. [공식 가격](https://platform.claude.com/docs/en/models/haiku-5-5/overview)의 더 비싼 구간으로 전체 1M 입력 context까지 예약하여 호출당 최대 `$0.51024`, 공통 ledger 8회 상한 `$4.08192`를 적용합니다. 모든 실행에 **같은 ledger**를 사용해야 하며 총 승인 예산 `$10`을 초과할 수 없습니다. 예약은 환급하지 않고 결과불명 시 중단합니다. 실제 usage의 input/output을 별도 기록하며 output에는 reasoning이 포함되어 별도 분해 수치로 추정하지 않습니다. 현재 모델·가격 검증일은 2026-10-31입니다.
+
+실제 사용 전 키의 제공업체/전송 대상, 모델/가격/예산과 합성 데이터 범위를 확인해야 합니다. 연결 실패·키 형식 불일치·결과불명에 자동 재시도하지 않습니다. `scripts/live_provider_smoke.py`는 별도의 사용자 직접 실행용 OpenAI 단일 호출 도구이며 기본 동작은 네트워크 없는 dry-run입니다.
 
 ## 계약 출처
 

@@ -113,7 +113,7 @@ def context(tmp_path):
     db.engine.dispose()
 
 
-def enqueue(ctx):
+def enqueue(ctx, model_id="openai:test-model"):
     with ctx.db.transaction() as session:
         job = ctx.jobs.enqueue(
             session,
@@ -122,7 +122,7 @@ def enqueue(ctx):
             resource_type="material",
             resource_id=ctx.resource,
             payload={"material_id": ctx.resource},
-            model_id="openai:test-model",
+            model_id=model_id,
             ai_key=KEY,
         )
         session.get(Material, ctx.resource).latest_job_id = job.id
@@ -554,3 +554,194 @@ def test_explicit_provider_token_cap_is_validated_without_calls():
     registry = ProviderRegistry(settings, max_completion_tokens=256, transport=httpx.MockTransport(respond))
     assert registry.generate("openai:test-model", KEY, "analysis", {}) == {"ok": True}
     assert len(calls) == 1
+
+
+ANTHROPIC_MODEL = "anthropic:claude-haiku-5-5"
+
+
+def anthropic_registry(respond, **kwargs):
+    return ProviderRegistry(
+        Settings(profile="test", enabled_models=(ANTHROPIC_MODEL,)),
+        transport=httpx.MockTransport(respond),
+        **kwargs,
+    )
+
+
+def anthropic_response(text='{"page_count":1}', *, stop_reason="end_turn"):
+    return {
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-haiku-5-5",
+        "stop_reason": stop_reason,
+        "content": [{"type": "text", "text": text}],
+        "usage": {
+            "input_tokens": 21,
+            "output_tokens": 13,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+        },
+    }
+
+
+def test_anthropic_non_generating_validation_and_multimodal_request():
+    calls, usage = [], []
+
+    def respond(request):
+        calls.append(request)
+        assert request.url.host == "api.anthropic.com"
+        assert request.headers["authorization"] == "Bearer " + KEY
+        assert request.headers["anthropic-version"] == "2026-10-21"
+        if request.method == "GET":
+            assert request.url.path == "/v1/models/claude-haiku-5-5"
+            return httpx.Response(200, json={"id": "claude-haiku-5-5", "type": "model"})
+        assert request.url.path == "/v1/messages"
+        body = json.loads(request.content)
+        assert body["model"] == "claude-haiku-5-5" and body["max_tokens"] == 256
+        assert body["stream"] is False
+        assert "max_completion_tokens" not in body and "response_format" not in body
+        assert "tools" not in body and "cache_control" not in body
+        assert body["messages"][0]["content"][0] == {
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/jpeg", "data": "YQ=="},
+        }
+        assert "image_data_url" not in body["messages"][0]["content"][1]["text"]
+        assert "JSON" in body["system"]
+        return httpx.Response(200, json=anthropic_response())
+
+    registry = anthropic_registry(respond, max_completion_tokens=256, usage_observer=usage.append)
+    assert registry.list_models() == [
+        {"id": ANTHROPIC_MODEL, "provider": "anthropic", "label": "claude-haiku-5-5", "available": True}
+    ]
+    assert registry.validate_key(ANTHROPIC_MODEL, KEY) == {"valid": True, "model_id": ANTHROPIC_MODEL}
+    assert len(calls) == 1 and not usage
+    assert registry.generate(
+        ANTHROPIC_MODEL, KEY, "analysis", {"image_data_url": "data:image/jpeg;base64,YQ=="}
+    ) == {"page_count": 1}
+    assert len(calls) == 2
+    assert usage == [
+        {
+            "provider": "anthropic",
+            "model": "claude-haiku-5-5",
+            "input_tokens": 21,
+            "output_tokens": 13,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "stop_reason": "end_turn",
+        }
+    ]
+    assert KEY not in json.dumps(usage) and "page_count" not in json.dumps(usage)
+
+
+@pytest.mark.parametrize("stop", ["max_tokens", "refusal", "tool_use", "pause_turn", None])
+def test_anthropic_incomplete_output_is_never_retried_but_usage_observed(stop):
+    observed = []
+    registry = anthropic_registry(
+        lambda request: httpx.Response(200, json=anthropic_response(stop_reason=stop)),
+        usage_observer=observed.append,
+    )
+    with pytest.raises(ProviderFailure) as error:
+        registry.generate(ANTHROPIC_MODEL, KEY, "analysis", {})
+    assert error.value.code == "INVALID_OUTPUT" and not error.value.retryable
+    assert observed[0]["output_tokens"] == 13
+
+
+@pytest.mark.parametrize("text", ['```json\n{"ok":true}\n```', '{"a":1,"a":2}', '{"a":NaN}', '{"a":', "[]"])
+def test_anthropic_strict_json_rejects_repairable_or_nonstandard_output(text):
+    observed = []
+    registry = anthropic_registry(
+        lambda request: httpx.Response(200, json=anthropic_response(text)), usage_observer=observed.append
+    )
+    with pytest.raises(ProviderFailure) as error:
+        registry.generate(ANTHROPIC_MODEL, KEY, "analysis", {})
+    assert error.value.code == "INVALID_OUTPUT"
+    assert observed[0]["input_tokens"] == 21
+
+
+def test_anthropic_thinking_blocks_are_not_exposed_as_output_or_usage():
+    data = anthropic_response()
+    data["content"].insert(
+        0, {"type": "thinking", "thinking": "private reasoning", "signature": "private-signature"}
+    )
+    observed = []
+    registry = anthropic_registry(
+        lambda request: httpx.Response(200, json=data), usage_observer=observed.append
+    )
+    assert registry.generate(ANTHROPIC_MODEL, KEY, "analysis", {}) == {"page_count": 1}
+    assert "private" not in json.dumps(observed)
+
+
+@pytest.mark.parametrize(
+    "status,code,retry,unknown",
+    [
+        (401, "PROVIDER_AUTH", True, False),
+        (403, "PROVIDER_AUTH", True, False),
+        (429, "PROVIDER_RATE_LIMIT", True, False),
+        (529, "TIMEOUT_UNKNOWN", False, True),
+        (302, "PROVIDER_UNAVAILABLE", False, False),
+    ],
+)
+def test_anthropic_error_mapping_and_redirect_refusal(status, code, retry, unknown):
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(status, text=KEY, headers={"Location": "https://evil.invalid"})
+
+    registry = anthropic_registry(respond)
+    with pytest.raises(ProviderFailure) as error:
+        registry.generate(ANTHROPIC_MODEL, KEY, "analysis", {})
+    assert (error.value.code, error.value.retryable, error.value.outcome_unknown) == (code, retry, unknown)
+    assert len(calls) == 1 and KEY not in str(error.value)
+
+
+def test_anthropic_worker_adapter_end_to_end_without_network(context):
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(200, json=anthropic_response())
+
+    context.providers = anthropic_registry(respond)
+    job_id = enqueue(context, ANTHROPIC_MODEL)
+    assert context.jobs.run_once()
+    assert read_job(context, job_id).status == "succeeded"
+    assert len(calls) == 1
+
+
+def test_usage_observer_filters_untrusted_metadata_and_keeps_per_call_state():
+    observed = []
+    data = anthropic_response()
+    data["usage"] = {
+        "input_tokens": KEY,
+        "output_tokens": True,
+        "cache_read_input_tokens": -1,
+        "cache_creation_input_tokens": 10**15,
+        "secret": KEY,
+    }
+    data["stop_reason"] = KEY
+    registry = anthropic_registry(
+        lambda request: httpx.Response(200, json=data), usage_observer=observed.append
+    )
+    with pytest.raises(ProviderFailure):
+        registry.generate(ANTHROPIC_MODEL, KEY, "analysis", {})
+    assert observed == [
+        {
+            "provider": "anthropic",
+            "model": "claude-haiku-5-5",
+            "input_tokens": None,
+            "output_tokens": None,
+            "cache_read_input_tokens": None,
+            "cache_creation_input_tokens": None,
+            "stop_reason": None,
+        }
+    ]
+    assert KEY not in json.dumps(observed)
+    observed.clear()
+    registry = anthropic_registry(
+        lambda request: httpx.Response(200, json=anthropic_response()), usage_observer=observed.append
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert list(
+            pool.map(lambda _: registry.generate(ANTHROPIC_MODEL, KEY, "analysis", {}), range(2))
+        ) == [{"page_count": 1}, {"page_count": 1}]
+    assert len(observed) == 2 and observed[0] is not observed[1]

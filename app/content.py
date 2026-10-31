@@ -453,6 +453,12 @@ def get_explanation(explanation_id: UUID, request: Request):
         }
 
 
+def _generation_version(session, version):
+    result = version_dto(session, version)
+    result["evidence"] = [evidence_dto(session, item["chunk_id"]) for item in result["evidence"]]
+    return result
+
+
 class QuestionsHandler:
     def __init__(self, ctx):
         self.ctx = ctx
@@ -478,11 +484,27 @@ class QuestionsHandler:
         s = session.get(QuestionSet, job.resource_id)
         links = session.scalars(select(QuestionSetConcept).where(QuestionSetConcept.set_id == s.id)).all()
         return {
-            "instructions": 'Return JSON object {"questions": [...]}; each question has question_type, concept_version_ids, prompt, options (objects id,text), answer_key (QuestionAnswer), public_explanation, accepted_answers, evidence_chunk_ids. Use only supplied versions and evidence. Generate exactly count questions in order. Multiple choice has 2-5 options and exactly one correct selected option. Short answer has no options and a nonempty text answer.',
+            "instructions": (
+                'Return one JSON object, without a Markdown fence, with exactly the key "questions". '
+                "Its value must contain exactly count questions in the desired order. Each question is an "
+                "object with exactly these keys: question_type, concept_version_ids, prompt, options, "
+                "answer_key, public_explanation, accepted_answers, evidence_chunk_ids. "
+                'question_type is "multiple_choice" or "short_answer". concept_version_ids is a nonempty '
+                "unique list of IDs from the supplied versions; evidence_chunk_ids is a nonempty unique "
+                "list of chunk IDs from evidence attached to those same versions. prompt and "
+                "public_explanation are nonempty strings of at most 12000 characters. "
+                "For multiple_choice, options is a list of 2 to 5 objects, each with exactly nonempty "
+                "string keys id and text; option IDs must be unique. The answer_key must have exactly "
+                'this shape: {"type":"multiple_choice","selected_option_ids":["A"]}, with exactly '
+                "one selected ID that matches an option ID. For short_answer, options must be [], and "
+                'answer_key must have exactly this shape: {"type":"short_answer","text":"answer"}; '
+                "the answer text must be 1 to 12000 characters. accepted_answers is an array of "
+                "nonempty strings, each at most 12000 characters; use [] if none. Do not add keys."
+            ),
             "count": s.requested_count,
             "difficulty": s.difficulty,
             "versions": [
-                version_dto(session, session.get(ConceptVersion, x.concept_version_id)) for x in links
+                _generation_version(session, session.get(ConceptVersion, x.concept_version_id)) for x in links
             ],
         }
 
@@ -646,9 +668,19 @@ class ExplanationHandler:
             raise ValueError("stale job")
         e = session.get(LearningExplanation, job.resource_id)
         return {
-            "instructions": "Return JSON object with title, explanation_markdown, evidence. Evidence is a nonempty list of objects {chunk_id, excerpt}; excerpt must be a literal substring of the source chunk. Cite at least one supplied evidence ID in markdown as [근거: <chunk_id>], and cite no ID absent from evidence.",
+            "instructions": (
+                "Return one JSON object without a Markdown fence, with exactly these keys: title, "
+                "explanation_markdown, evidence. title is a nonempty string of at most 200 characters; "
+                "explanation_markdown is a nonempty string of at most 24000 characters. "
+                "evidence is a nonempty array of objects with exactly the keys chunk_id and excerpt. "
+                "Use unique chunk IDs supplied in the pinned version evidence. Each excerpt must be "
+                "a nonempty literal substring of its source chunk, at most 2000 characters. "
+                "Cite at least one evidence chunk in explanation_markdown using the exact pattern "
+                "[\uadfc\uac70: <chunk_id>], replacing <chunk_id> with its actual ID. Every cited ID "
+                "must be present in the output evidence. Do not add keys."
+            ),
             "language": e.explanation_language,
-            "version": version_dto(session, session.get(ConceptVersion, e.concept_version_id)),
+            "version": _generation_version(session, session.get(ConceptVersion, e.concept_version_id)),
         }
 
     def persist(self, session, job, output):

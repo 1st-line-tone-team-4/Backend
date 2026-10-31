@@ -16,3 +16,6 @@ htmlcov/
 dist/
 *.egg-info/
 test-results/
+*live*budget*.json
+*live*budget*.json.lock
+*live*budget*.json.tmp

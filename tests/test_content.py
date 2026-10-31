@@ -330,3 +330,19 @@ def test_cursor_signatures_and_scope(setup):
             with pytest.raises(ApiError) as exc:
                 _cursor_decode(token, "secret", check_scope)
             assert exc.value.status == 422
+
+
+def test_generation_prompts_describe_shapes_and_include_full_pinned_evidence(setup):
+    db, ids = setup
+    with db.transaction() as session:
+        link = session.get(ConceptVersionEvidence, (ids["version"], ids["chunk"]))
+        link.quote = "Source"
+        session.flush()
+        questions = QuestionsHandler(None).prepare(session, session.get(Job, ids["job"]))
+        explanation = ExplanationHandler(None).prepare(session, session.get(Job, ids["ex_job"]))
+        assert "selected_option_ids" in questions["instructions"]
+        assert '"type":"short_answer","text":"answer"' in questions["instructions"]
+        assert questions["versions"][0]["evidence"][0]["excerpt"] == "Source excerpt text"
+        assert explanation["version"]["evidence"][0]["excerpt"] == "Source excerpt text"
+        assert "[근거: <chunk_id>]" in explanation["instructions"]
+        assert "2000 characters" in explanation["instructions"]
