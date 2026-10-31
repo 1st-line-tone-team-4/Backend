@@ -69,7 +69,7 @@ class ProviderRegistry:
         # environment proxies: neither may redirect the BYOK credential.
         headers = {"Accept-Encoding": "identity"}
         if provider == "anthropic":
-            # Anthropic API keys use x-api-key; Bearer is only for OAuth access tokens.
+            # The official API supports both Bearer and this legacy API-key header.
             headers["x-api-key"] = key
             headers["anthropic-version"] = self.ANTHROPIC_VERSION
         else:
