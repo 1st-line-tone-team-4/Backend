@@ -30,6 +30,9 @@ def complete_grade(db: Session, job_id: UUID, *, is_correct: bool, correct_answe
 
 
 def complete_message(db: Session, job_id: UUID, *, assistant_content: str) -> None:
+    from language_learning_api.services.teachback_prompts import validate_message_output
+
+    assistant_content = validate_message_output({"assistant_content": assistant_content})
     job = db.scalar(select(Job).where(Job.id == job_id).with_for_update())
     if not job or job.kind != "message" or job.status not in ("queued", "running"):
         raise HTTPException(409, "JOB_NOT_ACTIVE")
@@ -45,7 +48,7 @@ def complete_message(db: Session, job_id: UUID, *, assistant_content: str) -> No
     db.commit()
 
 
-def complete_report(db: Session, job_id: UUID, *, items: list[dict], next_action: str) -> SessionReport:
+def complete_report(db: Session, job_id: UUID, *, items: list[dict], next_action: str | None) -> SessionReport:
     job = db.scalar(select(Job).where(Job.id == job_id).with_for_update())
     if not job or job.kind != "report" or job.status not in ("queued", "running"):
         raise HTTPException(409, "JOB_NOT_ACTIVE")
@@ -54,18 +57,10 @@ def complete_report(db: Session, job_id: UUID, *, items: list[dict], next_action
     if session.latest_job_id != job.id: raise HTTPException(409, "STALE_JOB")
     version = db.get(ConceptVersion, session.concept_version_id)
     if not version: raise HTTPException(409, "CONCEPT_VERSION_NOT_FOUND")
-    checklist = version.checklist or []
-    valid_statuses = {"explained", "partial", "omission", "error", "unverified"}
-    required_ids = {str(item.get("id", item.get("checklist_item_id"))) for item in checklist}
-    received_ids = {str(item.get("checklist_item_id")) for item in items}
-    valid_chunks = {str(item.get("chunk_id")) for item in version.evidence or [] if item.get("chunk_id")}
-    evidence_invalid = any(
-        any(str(evidence.get("chunk_id")) not in valid_chunks for evidence in item.get("evidence", []))
-        or (item.get("status") == "error" and not item.get("evidence"))
-        for item in items
-    )
-    if len(items) != len(checklist) or required_ids != received_ids or any(item.get("status") not in valid_statuses for item in items) or evidence_invalid:
-        raise HTTPException(422, "INVALID_REPORT_OUTPUT")
+    from language_learning_api.services.teachback_prompts import validate_report_output
+
+    validated = validate_report_output({"items": items, "next_action": next_action}, session, version)
+    items, next_action = validated["items"], validated["next_action"]
     score = 0.0; assessable = 0
     for item in items:
         if item["status"] == "unverified": continue
@@ -76,9 +71,10 @@ def complete_report(db: Session, job_id: UUID, *, items: list[dict], next_action
         coverage=coverage, coverage_formula="weighted-v1", assessable_count=assessable,
         weighted_score=score, items=jsonable_encoder(items), next_action=next_action)
     db.add(report); db.flush()
-    action = ImprovementAction(owner_id=session.owner_id, report_id=report.id, concept_id=session.concept_id,
-        text=next_action, status="pending")
-    db.add(action); db.flush(); report.action_id = action.id
+    if next_action:
+        action = ImprovementAction(owner_id=session.owner_id, report_id=report.id, concept_id=session.concept_id,
+            text=next_action, status="pending")
+        db.add(action); db.flush(); report.action_id = action.id
     session.status = "completed"; session.completed_at = utc_now()
     job.status = "succeeded"; job.retryable = False; job.error_code = None
     job.result_url = f"/v1/teachback-sessions/{session.id}/report"; job.updated_at = utc_now()
