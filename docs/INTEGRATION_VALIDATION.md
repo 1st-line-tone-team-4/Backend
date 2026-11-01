@@ -82,7 +82,7 @@ Only queued/running jobs now count as busy. Unknown job history, same-answer
 duplicate-cost guards, explicit restart acknowledgment, current-resource checks
 and stale-worker fencing remain. Tests cover changed-answer recovery,
 abandon/new-session/skip/reschedule, new-message continuation, no automatic
-redispatch and the unchanged report-pending policy. MySQL helpers additionally
+redispatch and the then-current report-pending policy (superseded by N12 below). MySQL helpers additionally
 exercise stale repeatable-read snapshots and a worker-held latest-job row.
 
 N14 batches plan display pins and progress. Authoritative rescheduling retains
@@ -111,11 +111,59 @@ are batched without moving ownership checks out of callers.
 
 The complete module map, request flow and remaining query hot spots are in
 [ARCHITECTURE.md](ARCHITECTURE.md). This refactor does not implement the 13 missing
-operations or decide N10/N12/N13.
+operations. N12/N13 were subsequently decided by the user as recorded below;
+N10 remains reserved.
+
+### Confirmed N12/N13 policies
+
+The user confirmed that terminal report work may be abandoned while preserving
+existing diagnostics, and that the app's monthly subscription policy does not
+require a new per-generation acknowledgment for independent learning explanations.
+
+- N12 changes `PATCH /teachback-sessions/{sessionId}` behavior, not its schema:
+  active sessions without queued/running jobs remain abandonable. A
+  `report_pending` session is also eligible when its current owner-bound report
+  job is terminal and no report is stored. Completed sessions and stored reports
+  stay protected. Repeating abandonment returns the current DTO with `200`, even
+  after its plan becomes inactive or its task is skipped. Only session status is
+  changed; messages, latest-job pointer, terminal job diagnostics and progress
+  history remain. No extra debug payloads or secrets are persisted. Late worker
+  results and retry/restart after abandonment remain fenced/stale. Existing
+  material reference and deletion rules still apply.
+- N13 adds no consent field or new charge gate to `ExplanationInput`. A fresh
+  idempotency key is an explicit new-generation request, including after an
+  unknown outcome. Same-key replay, active-job duplicate protection and no
+  automatic redispatch remain independent rules. BYOK provider charges are
+  separate from app subscriptions; this decision does not remove common restart
+  acknowledgment, question-generation R1 or public-sharing consent. It does not
+  implement billing/subscription entitlement APIs.
+- N13 retains the existing active-job check and unique active-fingerprint
+  constraint. Tests assert committed job/resource counts, rejected-request
+  rollback and provider call counts. No new locking-read optimization or
+  fingerprint format change is included in the policy update.
+
+Canonical request/response schemas, database schema and the **51/64 operation**
+inventory are unchanged. Canonical descriptions and both published OpenAPI
+snapshots document the new N12 transition. The final local N12/N13 suite passed
+**594 tests, 1 skipped** in **208.33s** on Windows/Python 3.12. Ruff lint/format
+(83 files), compilation and whitespace checks passed. The skip is the unavailable
+local disposable MySQL URL; the one warning is the existing Starlette/httpx
+test-client deprecation. Independent source review checked the final reduced
+delta and corrected the N12 retry/restart error-precedence prose.
+
+The CI MySQL test includes the new report-abandon current-read/NOWAIT and both
+restart interleavings, plus explanation same-input old-snapshot and distinct-source
+concurrency outcomes. Those assertions include durable rows, replay/rollback,
+opaque credential-reference cleanup and no provider dispatch during acceptance.
+The exact pushed commit's GitHub Actions result remains the evidence for actual
+MySQL execution. Earlier results below are historical evidence for the preceding
+structural revision.
+
+### Earlier structural revision (`d4c43ac`) and original baseline
 
 Previously recorded baseline Windows/Python 3.12 run, before the N11–N15 follow-up: **539 passed, 1 skipped** in 171.33s. The skip is the explicitly unavailable disposable MySQL URL. Baseline Ruff lint/format, compilation and whitespace checks passed. The only warning is the existing Starlette/httpx test-client deprecation.
 
-The follow-up Windows/Python 3.12 full suite passed **569 tests, 1 skipped** in
+The structural follow-up Windows/Python 3.12 full suite passed **569 tests, 1 skipped** in
 188.16s. A final test-only ordering case was added after that run's collection;
 the complete projection test module then passed **4 tests**, including that new
 case. No runtime code changed between these runs. Ruff lint/format (81 files),
@@ -156,8 +204,7 @@ The CI workflow runs the full SQLite suite and then `tests/test_mysql.py` agains
 - The frontend repository had no branch refs or code when checked. No frontend was invented, and no browser/UI integration is claimed. Cross-origin deployment still needs an agreed origin/CORS configuration.
 - Existing noncanonical A databases and nonempty B task stubs require a separately reviewed data reconciliation/backfill. Migration 005 does not prove every preexisting users index/check; operators must verify its documented canonical prerequisites.
 - N10 concept-confirmation PATCH idempotency remains reserved for the user's integration decision. Shared error-enum expansion, audit-retention duration and provider workspace-key policy are not silently changed here.
-- N12 remains a contract decision: a failed report currently leaves its session `report_pending`, while abandon PATCH is limited to active sessions. Allowing abandonment after failed/unknown report jobs only when no queued/running job exists is a recommendation, not implemented or silently adopted policy.
-- N13 remains a contract decision: independent explanation creation explicitly permits a new generation with a new idempotency key and has no duplicate-cost acknowledgment field. Blocking a matching `outcome_unknown` generation with `409` and directing the user to the existing acknowledged restart is a recommendation that would change contract behavior, not a completed fix.
+- N12/N13 are confirmed and implemented as described above. Removing BYOK or the global restart/R1 safeguards would be a separate decision; no such removal is implied by the monthly subscription policy.
 - No static type checker is configured in this repository. Compilation, Ruff, schema/contract checks and runtime tests are recorded separately.
 
 The original attached review file was not available from the checked source references. Follow-up findings were independently reproduced from repository code/contracts; this record does not claim that the original attachment was inspected or that every pending policy issue has been resolved.

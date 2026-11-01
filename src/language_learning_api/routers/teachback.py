@@ -278,10 +278,28 @@ def abandon_session(
 ):
     ctx, owner = get_context(request), get_user(request)
     with ctx.db.transaction() as db:
-        session = owned_session(db, owner, session_id, lock=True)
-        if session.status != "active":
+        # Abandonment is cleanup, including after the task/plan becomes inactive.
+        # Keep parent -> session locking; latest_job uses NOWAIT against workers.
+        session = owned_session(db, owner, session_id, lock=True, active_task=False)
+        if session.status == "abandoned":
+            return {"data": session_dto(db, session)}
+        if session.status not in {"active", "report_pending"}:
             raise ApiError(409, "SESSION_NOT_ACTIVE", "Session is not active.")
-        no_busy_job(db, session)
+        job = no_busy_job(db, session)
+        if session.status == "report_pending":
+            if (
+                job is None
+                or job.kind != "report"
+                or job.resource_type != "session"
+                or job.resource_id != session.id
+                or job.status not in {"failed", "outcome_unknown", "succeeded"}
+            ):
+                raise ApiError(409, "SESSION_NOT_ACTIVE", "Session is not active.")
+        if db.scalar(
+            select(SessionReport.id).where(SessionReport.session_id == session.id).with_for_update()
+        ):
+            raise ApiError(409, "SESSION_NOT_ACTIVE", "Session is not active.")
+        # Preserve job pointers, terminal diagnostics and all learning history.
         session.status = body.status
         db.flush()
         return {"data": session_dto(db, session)}

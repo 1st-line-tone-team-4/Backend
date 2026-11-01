@@ -62,6 +62,8 @@ task는 `solve | teach_back | review`이며 개념 버전을 고정합니다. `c
 
 리포트는 고정 개념 버전의 전체 checklist 항목을 평가하고 항목·근거를 정규화된 행에 저장합니다. coverage는 `weighted-v1` 계산 결과이며 provider가 보낸 점수를 그대로 신뢰하지 않습니다. 평가 가능한 항목이 없으면 coverage는 null입니다. 피드백 접수는 기존 평가나 coverage를 자동 수정하지 않습니다.
 
+보고서 작업이 terminal인 `report_pending` 세션은 저장된 보고서가 없을 때 PATCH로 포기할 수 있습니다. `queued/running`은 `409`이고 완료 보고서·상태는 변경하지 않습니다. 이미 포기한 세션에 같은 PATCH를 보내면 `200`으로 재응답합니다. 계획/목표가 비활성이어도 정리가 가능하며 대화·Job 이력·latest pointer는 보존합니다. 포기 후 기존 Job은 재시작하거나 늦은 결과로 세션을 완료시킬 수 없습니다.
+
 ## 기록과 개선점
 
 | 메서드 | 경로 | 내용 |
