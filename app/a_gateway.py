@@ -5,6 +5,7 @@ to locate those locks; ownership/state are checked again under the locks.
 """
 
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 from .core import ApiError, utcnow
 from .models import (
@@ -176,32 +177,27 @@ class CanonicalTaskGateway(TaskGateway):
         material = session.get(Material, str(material_id))
         if material is None or material.user_id != str(user_id):
             raise ApiError(404, "NOT_FOUND", "Material not found.")
-        # Superseded plans and task/session history also retain their references.
-        if session.scalar(
-            select(StudyPlanMaterial.material_id)
-            .where(StudyPlanMaterial.material_id == material.id)
-            .limit(1)
-            .with_for_update()
-        ):
-            return True
-        if session.scalar(
+        # Retained history blocks deletion. A worker can hold an attempt/session
+        # before needing a source FK lock; never wait for it while deletion owns
+        # the material. A contended reference is conservatively still in use.
+        probes = (
+            select(StudyPlanMaterial.material_id).where(StudyPlanMaterial.material_id == material.id),
             select(PlanTaskConcept.task_id)
             .join(Concept, Concept.id == PlanTaskConcept.concept_id)
-            .where(Concept.material_id == material.id)
-            .limit(1)
-            .with_for_update()
-        ):
-            return True
-        return bool(
-            session.scalar(
-                select(TeachbackSession.id)
-                .join(ConceptVersion, ConceptVersion.id == TeachbackSession.concept_version_id)
-                .join(Concept, Concept.id == ConceptVersion.concept_id)
-                .where(Concept.material_id == material.id)
-                .limit(1)
-                .with_for_update()
-            )
+            .where(Concept.material_id == material.id),
+            select(TeachbackSession.id)
+            .join(ConceptVersion, ConceptVersion.id == TeachbackSession.concept_version_id)
+            .join(Concept, Concept.id == ConceptVersion.concept_id)
+            .where(Concept.material_id == material.id),
         )
+        try:
+            return any(
+                session.scalar(probe.limit(1).with_for_update(nowait=True)) is not None for probe in probes
+            )
+        except OperationalError as exc:
+            if getattr(exc.orig, "args", ())[:1] == (3572,):
+                return True
+            raise
 
     def read_question_attempts(self, session, user_id, set_id, question_ids):
         from language_learning_api.routers.questions import attempt_dto

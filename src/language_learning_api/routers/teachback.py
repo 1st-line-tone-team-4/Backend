@@ -154,7 +154,7 @@ def lock_standalone_version(db, owner, version_id):
         select(ConceptVersion)
         .join(Concept, Concept.id == ConceptVersion.concept_id)
         .where(ConceptVersion.id == version_id, Concept.material_id == material.id)
-        .with_for_update()
+        .with_for_update(read=True)
         .execution_options(populate_existing=True)
     )
     if version is None:
@@ -162,6 +162,32 @@ def lock_standalone_version(db, owner, version_id):
     if not version.is_confirmed:
         raise ApiError(422, "CONCEPT_NOT_CONFIRMED", "Concept version is not confirmed.")
     return version
+
+
+def lock_session_reference(db, model, owner, identity):
+    """Acquire FK parents without waiting while holding source/task locks.
+
+    A preliminary owner lookup preserves 404 isolation. The locking read then
+    refreshes state. SQLAlchemy's MySQL dialect renders shared NOWAIT using the
+    legacy LOCK IN SHARE MODE form, so use supported FOR UPDATE NOWAIT here.
+    """
+    predicate = (model.id == identity, model.user_id == owner)
+    if db.scalar(select(model.id).where(*predicate)) is None:
+        raise ApiError(404, "NOT_FOUND", "Related learning record not found.")
+    try:
+        row = db.scalar(
+            select(model)
+            .where(*predicate)
+            .with_for_update(nowait=True)
+            .execution_options(populate_existing=True)
+        )
+    except OperationalError as exc:
+        if getattr(exc.orig, "args", [None])[0] == 3572:
+            raise ApiError(409, "RESOURCE_CHANGED", "Related learning record is being updated.") from None
+        raise
+    if row is None:
+        raise ApiError(404, "NOT_FOUND", "Related learning record not found.")
+    return row
 
 
 @router.post("/teachback-sessions", status_code=201)
@@ -198,13 +224,7 @@ def create_session(body: TeachbackSessionInput, request: Request):
                 raise ApiError(409, "TASK_COMPLETED", "Task target is already complete.")
         attempt_id = str(body.attempt_id) if body.attempt_id else None
         if attempt_id:
-            attempt = db.scalar(
-                select(QuestionAttempt).where(
-                    QuestionAttempt.id == attempt_id, QuestionAttempt.user_id == owner
-                )
-            )
-            if not attempt:
-                raise ApiError(404, "NOT_FOUND", "Attempt not found.")
+            attempt = lock_session_reference(db, QuestionAttempt, owner, attempt_id)
             if attempt.status != "graded" or not db.scalar(
                 select(QuestionConcept.question_id).where(
                     QuestionConcept.question_id == attempt.question_id,
@@ -216,7 +236,7 @@ def create_session(body: TeachbackSessionInput, request: Request):
                 )
         previous_id = str(body.previous_session_id) if body.previous_session_id else None
         if previous_id:
-            previous = owned_session(db, owner, previous_id)
+            previous = lock_session_reference(db, TeachbackSession, owner, previous_id)
             if db.get(ConceptVersion, previous.concept_version_id).concept_id != version.concept_id:
                 raise ApiError(422, "CONCEPT_MISMATCH", "Previous session must concern the same concept.")
         session = TeachbackSession(
