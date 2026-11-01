@@ -4,7 +4,7 @@ Mutations lock goal, plan, then task. The preliminary ID lookups are only used
 to locate those locks; ownership/state are checked again under the locks.
 """
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 
 from .core import ApiError, utcnow
@@ -106,6 +106,106 @@ def task_completed_count(db, task, user_id, *, authoritative=False):
     if authoritative:
         stmt = stmt.with_for_update()
     return len(db.scalars(stmt).all())
+
+
+def task_completed_counts(db, tasks, user_id, *, authoritative=False):
+    """Read progress for an owned collection in at most two activity queries.
+
+    Normal DTO reads aggregate in SQL. Authoritative callers must already hold
+    the owning goal, plan and task locks; raw locking reads then see progress
+    committed while those locks were being acquired, even under MySQL RR.
+    """
+    tasks = list(tasks)
+    owner = str(user_id)
+    counts = {
+        task.id: task.target_count if task.task_type == "review" and task.status == "completed" else 0
+        for task in tasks
+    }
+    solve_ids = [task.id for task in tasks if task.task_type == "solve"]
+    teach_ids = [task.id for task in tasks if task.task_type == "teach_back"]
+    if solve_ids:
+        question_value = (
+            QuestionAttempt.question_id
+            if authoritative
+            else func.count(func.distinct(QuestionAttempt.question_id))
+        )
+        stmt = (
+            select(QuestionSet.task_id, question_value)
+            .join(QuestionAttempt, QuestionAttempt.question_set_id == QuestionSet.id)
+            .join(PlanTask, PlanTask.id == QuestionSet.task_id)
+            .join(StudyPlan, StudyPlan.id == PlanTask.study_plan_id)
+            .where(
+                QuestionSet.task_id.in_(solve_ids),
+                QuestionSet.user_id == owner,
+                QuestionAttempt.user_id == owner,
+                StudyPlan.user_id == owner,
+                QuestionAttempt.status == "graded",
+            )
+        )
+        if authoritative:
+            seen = {task_id: set() for task_id in solve_ids}
+            for task_id, question_id in db.execute(stmt.with_for_update()):
+                seen[task_id].add(question_id)
+            counts.update({task_id: len(question_ids) for task_id, question_ids in seen.items()})
+        else:
+            counts.update(db.execute(stmt.group_by(QuestionSet.task_id)).all())
+    if teach_ids:
+        session_value = TeachbackSession.id if authoritative else func.count(TeachbackSession.id)
+        stmt = (
+            select(TeachbackSession.task_id, session_value)
+            .join(PlanTask, PlanTask.id == TeachbackSession.task_id)
+            .join(StudyPlan, StudyPlan.id == PlanTask.study_plan_id)
+            .where(
+                TeachbackSession.task_id.in_(teach_ids),
+                TeachbackSession.user_id == owner,
+                StudyPlan.user_id == owner,
+                TeachbackSession.status == "completed",
+            )
+        )
+        if authoritative:
+            for task_id, _ in db.execute(stmt.with_for_update()):
+                counts[task_id] += 1
+        else:
+            counts.update(db.execute(stmt.group_by(TeachbackSession.task_id)).all())
+    return counts
+
+
+def task_concepts_many(db, task_ids, user_id):
+    """Load normalized display pins in one owner-scoped query, keeping DTO order."""
+    task_ids = [str(task_id) for task_id in task_ids]
+    result = {task_id: [] for task_id in task_ids}
+    if not task_ids:
+        return result
+    rows = db.execute(
+        select(
+            PlanTaskConcept.task_id,
+            PlanTaskConcept.concept_id,
+            PlanTaskConcept.concept_version_id,
+            ConceptVersion.name,
+            Concept.material_id,
+            MaterialUnit.id,
+            MaterialUnit.title,
+        )
+        .join(ConceptVersion, ConceptVersion.id == PlanTaskConcept.concept_version_id)
+        .join(Concept, Concept.id == PlanTaskConcept.concept_id)
+        .join(MaterialUnit, MaterialUnit.id == Concept.unit_id)
+        .join(PlanTask, PlanTask.id == PlanTaskConcept.task_id)
+        .join(StudyPlan, StudyPlan.id == PlanTask.study_plan_id)
+        .where(PlanTaskConcept.task_id.in_(task_ids), StudyPlan.user_id == str(user_id))
+        .order_by(PlanTaskConcept.task_id, PlanTaskConcept.concept_version_id)
+    )
+    for task_id, concept_id, version_id, name, material_id, unit_id, title in rows:
+        result[task_id].append(
+            {
+                "concept_id": concept_id,
+                "concept_version_id": version_id,
+                "concept_name": name,
+                "material_id": material_id,
+                "unit_id": unit_id,
+                "unit_title": title,
+            }
+        )
+    return result
 
 
 def _update_progress(db, user_id, task_id, task_type):

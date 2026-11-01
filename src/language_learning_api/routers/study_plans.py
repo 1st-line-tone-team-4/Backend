@@ -6,7 +6,14 @@ from fastapi import APIRouter, Header, Path, Query, Request
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import OperationalError
 
-from app.a_gateway import lock_owned_plan, lock_owned_task, task_completed_count, task_concepts
+from app.a_gateway import (
+    lock_owned_plan,
+    lock_owned_task,
+    task_completed_count,
+    task_completed_counts,
+    task_concepts,
+    task_concepts_many,
+)
 from app.core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow
 from app.models import (
     Concept,
@@ -40,8 +47,9 @@ router = APIRouter(tags=["학습 계획과 오늘 학습"])
 MAX_TASKS = 6000
 
 
-def task_dict(db, task, owner, *, completed_count=None):
-    concepts = task_concepts(db, task.id)
+def task_dict(db, task, owner, *, completed_count=None, concepts=None):
+    if concepts is None:
+        concepts = task_concepts(db, task.id)
     concept_name = concepts[0]["concept_name"] if concepts else "학습"
     if len(concepts) > 1:
         concept_name += f" 외 {len(concepts) - 1}개"
@@ -62,6 +70,16 @@ def task_dict(db, task, owner, *, completed_count=None):
         "display_order": task.ordinal,
         "concepts": concepts,
     }
+
+
+def tasks_dict(db, tasks, owner):
+    tasks = list(tasks)
+    concepts = task_concepts_many(db, [task.id for task in tasks], owner)
+    counts = task_completed_counts(db, tasks, owner)
+    return [
+        task_dict(db, task, owner, completed_count=counts[task.id], concepts=concepts[task.id])
+        for task in tasks
+    ]
 
 
 def material_ids(db, plan_id):
@@ -88,7 +106,7 @@ def plan_dict(db, plan):
         "revision": plan.revision,
         "status": plan.status,
         "generated_at": iso(plan.generated_at),
-        "tasks": [task_dict(db, task, plan.user_id) for task in plan_tasks(db, plan.id)],
+        "tasks": tasks_dict(db, plan_tasks(db, plan.id), plan.user_id),
         "material_ids": material_ids(db, plan.id),
     }
 
@@ -311,6 +329,24 @@ def list_study_plans(
             if len(rows) > limit
             else None
         )
+        rows = rows[:limit]
+        plan_ids = [plan.id for plan in rows]
+        materials = {plan_id: [] for plan_id in plan_ids}
+        counts = {}
+        if plan_ids:
+            for plan_id, material_id in db.execute(
+                select(StudyPlanMaterial.study_plan_id, StudyPlanMaterial.material_id)
+                .where(StudyPlanMaterial.study_plan_id.in_(plan_ids))
+                .order_by(StudyPlanMaterial.study_plan_id, StudyPlanMaterial.ordinal)
+            ):
+                materials[plan_id].append(material_id)
+            counts = dict(
+                db.execute(
+                    select(PlanTask.study_plan_id, func.count(PlanTask.id))
+                    .where(PlanTask.study_plan_id.in_(plan_ids))
+                    .group_by(PlanTask.study_plan_id)
+                ).all()
+            )
         data = [
             {
                 "id": p.id,
@@ -318,12 +354,10 @@ def list_study_plans(
                 "revision": p.revision,
                 "status": p.status,
                 "generated_at": iso(p.generated_at),
-                "material_ids": material_ids(db, p.id),
-                "task_count": db.scalar(
-                    select(func.count()).select_from(PlanTask).where(PlanTask.study_plan_id == p.id)
-                ),
+                "material_ids": materials[p.id],
+                "task_count": counts.get(p.id, 0),
             }
-            for p in rows[:limit]
+            for p in rows
         ]
         return {"data": data, "next_cursor": next_cursor}
 
@@ -358,7 +392,8 @@ def reschedule_study_plan(
         if len(remaining) > MAX_TASKS:
             raise ApiError(422, "RESOURCE_LIMIT_REACHED", "The plan would exceed 6000 tasks.")
         _ensure_not_busy(db, owner, remaining)
-        counts = {t.id: task_completed_count(db, t, owner, authoritative=True) for t in remaining}
+        counts = task_completed_counts(db, remaining, owner, authoritative=True)
+        concepts = task_concepts_many(db, [task.id for task in remaining], owner)
         old.status = "superseded"
         db.flush()  # Release active_goal_id before inserting the successor.
         new = StudyPlan(
@@ -382,7 +417,7 @@ def reschedule_study_plan(
                 today + timedelta(days=index * span // len(remaining)),
                 task.task_type,
                 max(1, task.target_count - counts[task.id]),
-                task_concepts(db, task.id),
+                concepts[task.id],
             )
         db.flush()
         return 201, {"data": plan_dict(db, new)}
@@ -497,7 +532,7 @@ def get_today(request: Request, exam_goal_id: UUID | None = None):
             "data": {
                 "date": day,
                 "progress": progress,
-                "tasks": [task_dict(db, task, owner) for task in tasks],
+                "tasks": tasks_dict(db, tasks, owner),
                 "next_action": action,
                 "exam_goal_id": goal.id if goal else None,
                 "study_plan_id": plan.id if plan else None,
