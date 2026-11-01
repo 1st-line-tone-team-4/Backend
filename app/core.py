@@ -85,7 +85,7 @@ def get_user(request: Request):
     return get_context(request).auth.authenticate(request)
 
 
-def idempotent(ctx, user_id, operation, key, request_data, action):
+def _idempotency_digest(key, request_data):
     if not isinstance(key, str) or not 16 <= len(key) <= 128:
         raise ApiError(400, "INVALID_IDEMPOTENCY_KEY", "Idempotency key must contain 16 to 128 characters.")
     try:
@@ -94,15 +94,34 @@ def idempotent(ctx, user_id, operation, key, request_data, action):
         ).encode("utf-8")
     except (TypeError, ValueError):
         raise ApiError(400, "INVALID_REQUEST", "Request cannot be canonicalized.")
-    digest = hashlib.sha256(encoded).hexdigest()
-    identity = (user_id, operation, key)
+    return hashlib.sha256(encoded).hexdigest()
 
-    def replay(row):
-        if row.request_hash != digest:
-            raise ApiError(409, "IDEMPOTENCY_CONFLICT", "Idempotency key was used for a different request.")
-        if row.status != "completed":
-            raise ApiError(409, "REQUEST_IN_PROGRESS", "Request is still in progress.")
-        return JSONResponse(status_code=row.http_status, content=row.response_body)
+
+def _idempotency_response(row, digest):
+    if row.request_hash != digest:
+        raise ApiError(409, "IDEMPOTENCY_CONFLICT", "Idempotency key was used for a different request.")
+    if row.status != "completed":
+        raise ApiError(409, "REQUEST_IN_PROGRESS", "Request is still in progress.")
+    return JSONResponse(status_code=row.http_status, content=row.response_body)
+
+
+def idempotency_replay(ctx, user_id, operation, key, request_data):
+    """Read a completed response before expensive, read-only preparation.
+
+    This does not claim the request. The final idempotent transaction must still
+    recheck the claim and domain state after preparation has finished.
+    """
+    digest = _idempotency_digest(key, request_data)
+    with ctx.db.transaction() as session:
+        row = session.get(IdempotencyRequest, (user_id, operation, key))
+        if row is not None and row.expires_at > utcnow():
+            return _idempotency_response(row, digest)
+    return None
+
+
+def idempotent(ctx, user_id, operation, key, request_data, action):
+    digest = _idempotency_digest(key, request_data)
+    identity = (user_id, operation, key)
 
     for attempt in range(3):
         claiming = True
@@ -122,7 +141,7 @@ def idempotent(ctx, user_id, operation, key, request_data, action):
                 row = session.get(IdempotencyRequest, identity)
                 if row:
                     claiming = False
-                    return replay(row)
+                    return _idempotency_response(row, digest)
                 row = IdempotencyRequest(
                     user_id=user_id,
                     operation_id=operation,
@@ -159,5 +178,5 @@ def idempotent(ctx, user_id, operation, key, request_data, action):
             with ctx.db.transaction() as session:
                 row = session.get(IdempotencyRequest, identity)
                 if row is not None:
-                    return replay(row)
+                    return _idempotency_response(row, digest)
             raise

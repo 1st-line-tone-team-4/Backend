@@ -12,16 +12,19 @@ from __future__ import annotations
 from datetime import timedelta
 import hashlib
 import json
+import math
+import time
 from uuid import UUID
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from .core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow
 from .credentials import check_key
+from .key_validation import validate_key_request
 from .models import Job, Material, QuestionSet, LearningExplanation, IdempotencyRequest
 from .providers import ProviderFailure
 
@@ -52,12 +55,44 @@ def accepted(job):
 
 
 class JobService:
-    def __init__(self, ctx, *, lease_seconds=120):
-        if lease_seconds < 1:
-            raise ValueError("Lease must be positive")
+    def __init__(self, ctx, *, lease_seconds=420, prepare_seconds=60, generation_timeout_seconds=None):
+        test_profile = getattr(getattr(ctx, "settings", None), "profile", None) == "test"
+        if generation_timeout_seconds is not None and not test_profile:
+            raise ValueError("Generation budget overrides require the explicit test profile")
+        generation_seconds = (
+            generation_timeout_seconds
+            if generation_timeout_seconds is not None
+            else getattr(ctx.providers, "GENERATION_TIMEOUT_SECONDS", 300)
+        )
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+            for value in (lease_seconds, prepare_seconds, generation_seconds)
+        ):
+            raise ValueError("Worker timing budgets must be positive finite numbers")
+        if not test_profile and generation_seconds < 300:
+            raise ValueError("Production generation budget must cover at least 300 seconds")
+        if lease_seconds <= generation_seconds + prepare_seconds:
+            raise ValueError("Lease must exceed generation and preparation budgets")
         self.ctx = ctx
         self.handlers = {}
         self.lease_seconds = lease_seconds
+        self.prepare_seconds = prepare_seconds
+        self.generation_seconds = generation_seconds
+
+    def _stage_credential(self, session, key):
+        ref = self.ctx.credentials.put(key)
+        try:
+            # A known rollback discards this key immediately. On uncertain
+            # COMMIT acknowledgement retain it until the bounded vault TTL:
+            # even a fresh nonlocking read cannot prove the commit won't land.
+            self.ctx.db.on_transaction_end(session, rollback=lambda: self.ctx.credentials.delete(ref))
+        except BaseException:
+            self.ctx.credentials.delete(ref)
+            raise
+        return ref
 
     def register(self, kind, handler):
         if kind not in ("analysis", "questions", "learning_explanation", "grade", "message", "report"):
@@ -111,7 +146,7 @@ class JobService:
             fencing_token=0,
             created_at=now,
             updated_at=now,
-            credential_ref=self.ctx.credentials.put(ai_key),
+            credential_ref=self._stage_credential(session, ai_key),
         )
         try:
             # Nested transaction turns active-fingerprint races into a stable 409
@@ -300,20 +335,48 @@ class JobService:
         job_id, token = claimed
         key = None
         dispatched = False
+        prepared = None
+        preparation_started = time.monotonic()
         try:
             with self.ctx.db.transaction() as session:
                 job = self._guard(session, job_id, token)
                 if not job:
                     return True
                 self._resource(session, job)
+                self.ctx.providers.ensure_model(job.model_id)
+                handler = self.handlers[job.kind]
+                handler.set_state(session, job, "running")
+                model_id, kind = job.model_id, job.kind
+                snapshotter = getattr(handler, "prepare_snapshot", None)
+                if callable(snapshotter):
+                    snapshot = snapshotter(session, job)
+                else:
+                    # Other handlers only materialize bounded SQL input here.
+                    payload = handler.prepare(session, job)
+            if callable(snapshotter):
+                prepared = handler.prepare_external(snapshot)
+            if time.monotonic() - preparation_started >= self.prepare_seconds:
+                raise ProviderFailure("PROVIDER_UNAVAILABLE", retryable=True)
+            with self.ctx.db.transaction() as session:
+                job = self._guard(session, job_id, token)
+                if not job:
+                    return True
+                self._resource(session, job)
+                if callable(snapshotter):
+                    payload = handler.apply_prepared(session, job, prepared)
                 key = self.ctx.credentials.get(job.credential_ref)
                 if key is None:
                     raise ProviderFailure("CREDENTIAL_EXPIRED", retryable=True)
-                self.ctx.providers.ensure_model(job.model_id)
-                self.handlers[job.kind].set_state(session, job, "running")
-                payload = self.handlers[job.kind].prepare(session, job)
+                self.ctx.providers.ensure_model(model_id)
+                preflight = getattr(self.ctx.providers, "preflight", None)
+                if callable(preflight):
+                    preflight(model_id, kind, payload)
+                if time.monotonic() - preparation_started >= self.prepare_seconds:
+                    raise ProviderFailure("PROVIDER_UNAVAILABLE", retryable=True)
                 job.dispatched_at = utcnow()
-                model_id, kind = job.model_id, job.kind
+                # Reserve a fresh full interval for the bounded provider call
+                # and persistence; preparation never consumes that interval.
+                job.lease_expires_at = utcnow() + timedelta(seconds=self.lease_seconds)
                 # This transaction commits before the external call begins.
             dispatched = True
             output = self.ctx.providers.generate(model_id, key, kind, payload)
@@ -323,9 +386,19 @@ class JobService:
                 job = self._guard(session, job_id, token)
                 if not job:
                     return True
-                self._resource(session, job)
                 try:
-                    url = self.handlers[job.kind].persist(session, job, output)
+                    self._resource(session, job)
+                except ApiError as exc:
+                    if exc.code == "STALE_JOB":
+                        # A response was received: discard stale output as a
+                        # known failure. Never report an uncertain paid call.
+                        raise ProviderFailure("INVALID_OUTPUT") from None
+                    raise
+                try:
+                    if prepared is not None:
+                        url = handler.persist_prepared(session, job, output, prepared)
+                    else:
+                        url = handler.persist(session, job, output)
                 except (ApiError, ValueError, TypeError, KeyError, AssertionError):
                     raise ProviderFailure("INVALID_OUTPUT") from None
                 if not isinstance(url, str) or not url.startswith("/v1/") or len(url) > 512 or "://" in url:
@@ -343,6 +416,7 @@ class JobService:
             self._finish_failure(job_id, token, ProviderFailure("INTERNAL_ERROR", outcome_unknown=dispatched))
         finally:
             key = None
+            prepared = None
         return True
 
     def _locked_owned(self, session, job_id, user_id):
@@ -365,8 +439,9 @@ class JobService:
             raise ApiError(409, "MODEL_MISMATCH", "Retry must use the original model.")
         self.ctx.providers.ensure_model(model_id)
         self._resource(session, job, require_failed=True)
-        ref = self.ctx.credentials.put(ai_key)
-        self._secret_cleanup(job)
+        ref = self._stage_credential(session, ai_key)
+        previous_ref = job.credential_ref
+        self.ctx.db.on_transaction_end(session, commit=lambda: self.ctx.credentials.delete(previous_ref))
         job.credential_ref = ref
         job.status, job.retryable, job.error_code = "queued", False, None
         job.attempt_no += 1
@@ -466,16 +541,13 @@ def validate_key(body: ModelBody, request: Request):
     ctx, owner = get_context(request), get_user(request)
     key = check_key(request.headers.get("X-AI-Key"))
 
-    def action(session):
-        return 200, {"data": ctx.providers.validate_key(body.model_id, key)}
-
-    return idempotent(
+    return validate_key_request(
         ctx,
         owner,
-        "validateAIKey",
+        body.model_id,
+        key,
         request.headers.get("Idempotency-Key"),
         request_data(request, body),
-        action,
     )
 
 
@@ -483,9 +555,26 @@ def validate_key(body: ModelBody, request: Request):
 def get_job(job_id: UUID, request: Request):
     ctx, owner = get_context(request), get_user(request)
     with ctx.db.transaction() as session:
-        job = ctx.jobs._locked_owned(session, str(job_id), owner)
+        job = session.scalar(select(Job).where(Job.id == str(job_id), Job.user_id == owner))
+        if job is None:
+            raise ApiError(404, "NOT_FOUND", "Job not found.")
         now = utcnow()
-        if job.last_polled_at and now - job.last_polled_at < timedelta(seconds=2):
+        deadline = now - timedelta(seconds=2)
+        allowed = not job.last_polled_at or job.last_polled_at <= deadline
+        if allowed:
+            allowed = (
+                session.execute(
+                    update(Job)
+                    .where(
+                        Job.id == str(job_id),
+                        Job.user_id == owner,
+                        or_(Job.last_polled_at.is_(None), Job.last_polled_at <= deadline),
+                    )
+                    .values(last_polled_at=now)
+                ).rowcount
+                == 1
+            )
+        if not allowed:
             # Returned directly so the required Retry-After survives generic errors.
             return JSONResponse(
                 status_code=429,
@@ -499,7 +588,6 @@ def get_job(job_id: UUID, request: Request):
                     }
                 },
             )
-        job.last_polled_at = now
         return {"data": job_dto(job)}
 
 
