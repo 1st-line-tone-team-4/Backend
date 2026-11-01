@@ -1,0 +1,4161 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Language Learning API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/v1/exam-goals": {
+      "get": {
+        "tags": [
+          "시험 목표"
+        ],
+        "summary": "List Exam Goals",
+        "operationId": "list_exam_goals_v1_exam_goals_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 1024
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamGoalPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "시험 목표"
+        ],
+        "summary": "Create Exam Goal",
+        "operationId": "create_exam_goal_v1_exam_goals_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamGoalInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamGoalEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/exam-goals/{goalId}": {
+      "patch": {
+        "tags": [
+          "시험 목표"
+        ],
+        "summary": "Update Exam Goal",
+        "operationId": "update_exam_goal_v1_exam_goals__goalId__patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "goalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Goalid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamGoalPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamGoalEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/study-plans": {
+      "post": {
+        "tags": [
+          "학습 계획과 오늘 학습"
+        ],
+        "summary": "Create Study Plan",
+        "operationId": "create_study_plan_v1_study_plans_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudyPlanInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "학습 계획과 오늘 학습"
+        ],
+        "summary": "List Study Plans",
+        "operationId": "list_study_plans_v1_study_plans_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 1024
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "exam_goal_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Exam Goal Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/study-plans/{planId}": {
+      "get": {
+        "tags": [
+          "학습 계획과 오늘 학습"
+        ],
+        "summary": "Get Study Plan",
+        "operationId": "get_study_plan_v1_study_plans__planId__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "planId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Planid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/study-plans/{planId}/reschedule": {
+      "post": {
+        "tags": [
+          "학습 계획과 오늘 학습"
+        ],
+        "summary": "Reschedule Study Plan",
+        "operationId": "reschedule_study_plan_v1_study_plans__planId__reschedule_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "planId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Planid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/plan-tasks/{taskId}": {
+      "patch": {
+        "tags": [
+          "학습 계획과 오늘 학습"
+        ],
+        "summary": "Update Plan Task",
+        "operationId": "update_plan_task_v1_plan_tasks__taskId__patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Taskid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanTaskPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanTaskEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/today": {
+      "get": {
+        "tags": [
+          "학습 계획과 오늘 학습"
+        ],
+        "summary": "Get Today",
+        "operationId": "get_today_v1_today_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "exam_goal_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Exam Goal Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TodayEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/questions/{questionId}": {
+      "get": {
+        "tags": [
+          "문제 풀이"
+        ],
+        "summary": "Get Question",
+        "operationId": "get_question_v1_questions__questionId__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "questionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Questionid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/questions/{questionId}/attempts": {
+      "post": {
+        "tags": [
+          "문제 풀이"
+        ],
+        "summary": "Submit Attempt",
+        "operationId": "submit_attempt_v1_questions__questionId__attempts_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "questionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Questionid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-AI-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "title": "X-Ai-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttemptInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "문제 풀이"
+        ],
+        "summary": "List Question Attempts",
+        "operationId": "list_question_attempts_v1_questions__questionId__attempts_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "questionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Questionid"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionAttemptPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/attempts/{attemptId}": {
+      "get": {
+        "tags": [
+          "문제 풀이"
+        ],
+        "summary": "Get Attempt",
+        "operationId": "get_attempt_v1_attempts__attemptId__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "attemptId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Attemptid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/teachback-sessions": {
+      "post": {
+        "tags": [
+          "Teach-back"
+        ],
+        "summary": "Create Session",
+        "operationId": "create_session_v1_teachback_sessions_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeachbackSessionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeachbackEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/teachback-sessions/{sessionId}": {
+      "get": {
+        "tags": [
+          "Teach-back"
+        ],
+        "summary": "Get Session Route",
+        "operationId": "get_session_route_v1_teachback_sessions__sessionId__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Sessionid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeachbackEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Teach-back"
+        ],
+        "summary": "Abandon Session",
+        "operationId": "abandon_session_v1_teachback_sessions__sessionId__patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Sessionid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeachbackSessionPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeachbackEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/teachback-sessions/{sessionId}/messages": {
+      "get": {
+        "tags": [
+          "Teach-back"
+        ],
+        "summary": "List Messages",
+        "operationId": "list_messages_v1_teachback_sessions__sessionId__messages_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Sessionid"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagePage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Teach-back"
+        ],
+        "summary": "Send Message",
+        "operationId": "send_message_v1_teachback_sessions__sessionId__messages_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Sessionid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-AI-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "title": "X-Ai-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/teachback-sessions/{sessionId}/complete": {
+      "post": {
+        "tags": [
+          "Teach-back"
+        ],
+        "summary": "Complete Session",
+        "operationId": "complete_session_v1_teachback_sessions__sessionId__complete_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Sessionid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-AI-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "title": "X-Ai-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteSessionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/teachback-sessions/{sessionId}/report": {
+      "get": {
+        "tags": [
+          "Teach-back"
+        ],
+        "summary": "Get Report",
+        "operationId": "get_report_v1_teachback_sessions__sessionId__report_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Sessionid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionReportEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/teachback-sessions/{sessionId}/feedback": {
+      "post": {
+        "tags": [
+          "Teach-back"
+        ],
+        "summary": "Report Feedback",
+        "operationId": "report_feedback_v1_teachback_sessions__sessionId__feedback_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Sessionid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/teachback-sessions/{sessionId}/final-answer": {
+      "post": {
+        "tags": [
+          "Teach-back"
+        ],
+        "summary": "Final Answer",
+        "operationId": "final_answer_v1_teachback_sessions__sessionId__final_answer_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Sessionid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinalAnswerInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/records/public-attempts": {
+      "get": {
+        "tags": [
+          "학습 기록과 취약점"
+        ],
+        "summary": "List Public Attempts",
+        "operationId": "list_public_attempts_v1_records_public_attempts_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicAttemptPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/records/sessions": {
+      "get": {
+        "tags": [
+          "학습 기록과 취약점"
+        ],
+        "summary": "List Sessions",
+        "operationId": "list_sessions_v1_records_sessions_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSummaryPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/records/weaknesses": {
+      "get": {
+        "tags": [
+          "학습 기록과 취약점"
+        ],
+        "summary": "List Weaknesses",
+        "operationId": "list_weaknesses_v1_records_weaknesses_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeaknessPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/records/actions": {
+      "get": {
+        "tags": [
+          "학습 기록과 취약점"
+        ],
+        "summary": "List Actions",
+        "operationId": "list_actions_v1_records_actions_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImprovementActionPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/records/actions/{actionId}": {
+      "patch": {
+        "tags": [
+          "학습 기록과 취약점"
+        ],
+        "summary": "Update Action",
+        "operationId": "update_action_v1_records_actions__actionId__patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "actionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Actionid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImprovementActionPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/health": {
+      "get": {
+        "summary": "Health Check",
+        "operationId": "health_check_v1_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me": {
+      "get": {
+        "tags": [
+          "사용자"
+        ],
+        "summary": "Get Me",
+        "operationId": "get_me_v1_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfileEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AcceptedEnvelope": {
+        "properties": {
+          "data": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AcceptedJob"
+            },
+            "type": "object",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "AcceptedEnvelope"
+      },
+      "AcceptedJob": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "analysis",
+              "questions",
+              "grade",
+              "message",
+              "report",
+              "learning_explanation"
+            ],
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "outcome_unknown"
+            ],
+            "title": "Status"
+          },
+          "resource_type": {
+            "type": "string",
+            "enum": [
+              "material",
+              "question_set",
+              "attempt",
+              "session",
+              "learning_explanation"
+            ],
+            "title": "Resource Type"
+          },
+          "resource_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Resource Id"
+          },
+          "attempt_no": {
+            "type": "integer",
+            "title": "Attempt No",
+            "default": 1
+          },
+          "retryable": {
+            "type": "boolean",
+            "title": "Retryable",
+            "default": false
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "result_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Url"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "previous_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Job Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "resource_type",
+          "resource_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AcceptedJob"
+      },
+      "AttemptInput": {
+        "properties": {
+          "answer": {
+            "$ref": "#/components/schemas/QuestionAnswer"
+          },
+          "question_set_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Question Set Id"
+          },
+          "model_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Model Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "answer",
+          "question_set_id",
+          "model_id"
+        ],
+        "title": "AttemptInput"
+      },
+      "CompleteSessionInput": {
+        "properties": {
+          "model_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Model Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "model_id"
+        ],
+        "title": "CompleteSessionInput"
+      },
+      "CoursePreview": {
+        "properties": {
+          "days_remaining": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Days Remaining"
+          },
+          "eligible": {
+            "type": "boolean",
+            "title": "Eligible"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "EXAM_TOO_FAR",
+                  "EXAM_PASSED"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "stages": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "concept",
+                "practice",
+                "teach_back",
+                "review"
+              ]
+            },
+            "type": "array",
+            "title": "Stages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "days_remaining",
+          "eligible",
+          "reason",
+          "stages"
+        ],
+        "title": "CoursePreview"
+      },
+      "Evidence": {
+        "properties": {
+          "chunk_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Chunk Id"
+          },
+          "material_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Material Id"
+          },
+          "material_name": {
+            "type": "string",
+            "title": "Material Name"
+          },
+          "page_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Number"
+          },
+          "excerpt": {
+            "type": "string",
+            "title": "Excerpt"
+          }
+        },
+        "type": "object",
+        "required": [
+          "chunk_id",
+          "material_id",
+          "material_name",
+          "excerpt"
+        ],
+        "title": "Evidence"
+      },
+      "ExamGoalEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ExamGoalResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ExamGoalEnvelope"
+      },
+      "ExamGoalInput": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "exam_type": {
+            "type": "string",
+            "enum": [
+              "school_exam",
+              "toeic",
+              "toefl",
+              "entrance_exam",
+              "other"
+            ],
+            "title": "Exam Type"
+          },
+          "exam_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Exam Date"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "exam_type",
+          "exam_date"
+        ],
+        "title": "ExamGoalInput"
+      },
+      "ExamGoalPage": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ExamGoalResponse"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "title": "ExamGoalPage"
+      },
+      "ExamGoalPatch": {
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "exam_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exam Date"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "paused",
+                  "completed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ExamGoalPatch"
+      },
+      "ExamGoalResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "exam_type": {
+            "type": "string",
+            "title": "Exam Type"
+          },
+          "exam_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Exam Date"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused",
+              "completed"
+            ],
+            "title": "Status"
+          },
+          "course_preview": {
+            "$ref": "#/components/schemas/CoursePreview"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "exam_type",
+          "exam_date",
+          "status",
+          "course_preview"
+        ],
+        "title": "ExamGoalResponse"
+      },
+      "FeedbackEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/FeedbackResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "FeedbackEnvelope"
+      },
+      "FeedbackInput": {
+        "properties": {
+          "report_item_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Report Item Id"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "incorrect",
+              "unsupported",
+              "unclear",
+              "other"
+            ],
+            "title": "Reason"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "title": "FeedbackInput"
+      },
+      "FeedbackResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Session Id"
+          },
+          "report_item_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Report Item Id"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "received",
+              "reviewing",
+              "resolved",
+              "rejected"
+            ],
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "session_id",
+          "report_item_id",
+          "reason",
+          "comment",
+          "status",
+          "created_at"
+        ],
+        "title": "FeedbackResponse"
+      },
+      "FinalAnswerInput": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 12000,
+            "minLength": 1,
+            "title": "Content"
+          },
+          "input_mode": {
+            "type": "string",
+            "enum": [
+              "text",
+              "voice_transcript"
+            ],
+            "title": "Input Mode"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content",
+          "input_mode"
+        ],
+        "title": "FinalAnswerInput"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ImprovementActionPage": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ImprovementActionResponse"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "title": "ImprovementActionPage"
+      },
+      "ImprovementActionPatch": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "attempted",
+              "completed"
+            ],
+            "title": "Status"
+          },
+          "followup_session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Followup Session Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "ImprovementActionPatch"
+      },
+      "ImprovementActionResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "report_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Report Id"
+          },
+          "concept_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Concept Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "attempted",
+              "completed"
+            ],
+            "title": "Status"
+          },
+          "followup_session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Followup Session Id"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "report_id",
+          "concept_id",
+          "text",
+          "status",
+          "followup_session_id",
+          "updated_at"
+        ],
+        "title": "ImprovementActionResponse"
+      },
+      "MessageInput": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 12000,
+            "minLength": 1,
+            "title": "Content"
+          },
+          "input_mode": {
+            "type": "string",
+            "enum": [
+              "text",
+              "voice_transcript"
+            ],
+            "title": "Input Mode"
+          },
+          "model_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Model Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content",
+          "input_mode",
+          "model_id"
+        ],
+        "title": "MessageInput"
+      },
+      "MessagePage": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/MessageResponse"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "title": "MessagePage"
+      },
+      "MessageResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "input_mode": {
+            "type": "string",
+            "enum": [
+              "text",
+              "voice_transcript"
+            ],
+            "title": "Input Mode"
+          },
+          "sequence_no": {
+            "type": "integer",
+            "title": "Sequence No"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "role",
+          "content",
+          "input_mode",
+          "sequence_no",
+          "created_at"
+        ],
+        "title": "MessageResponse"
+      },
+      "PlanTaskConcept": {
+        "properties": {
+          "concept_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Concept Id"
+          },
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Concept Version Id"
+          },
+          "concept_name": {
+            "type": "string",
+            "title": "Concept Name"
+          },
+          "material_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Material Id"
+          },
+          "unit_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Unit Id"
+          },
+          "unit_title": {
+            "type": "string",
+            "title": "Unit Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "concept_id",
+          "concept_version_id",
+          "concept_name",
+          "material_id",
+          "unit_id",
+          "unit_title"
+        ],
+        "title": "PlanTaskConcept"
+      },
+      "PlanTaskEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PlanTaskResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "PlanTaskEnvelope"
+      },
+      "PlanTaskPatch": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "completed",
+              "skipped"
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "PlanTaskPatch"
+      },
+      "PlanTaskResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "due_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Due Date"
+          },
+          "task_type": {
+            "type": "string",
+            "enum": [
+              "concept",
+              "solve",
+              "teach_back",
+              "review"
+            ],
+            "title": "Task Type"
+          },
+          "concept_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Concept Ids"
+          },
+          "concept_version_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Concept Version Ids"
+          },
+          "target_count": {
+            "type": "integer",
+            "title": "Target Count"
+          },
+          "completed_count": {
+            "type": "integer",
+            "title": "Completed Count"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "completed",
+              "skipped"
+            ],
+            "title": "Status"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "display_order": {
+            "type": "integer",
+            "title": "Display Order"
+          },
+          "concepts": {
+            "items": {
+              "$ref": "#/components/schemas/PlanTaskConcept"
+            },
+            "type": "array",
+            "title": "Concepts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "due_date",
+          "task_type",
+          "concept_ids",
+          "concept_version_ids",
+          "target_count",
+          "completed_count",
+          "status",
+          "completed_at",
+          "title",
+          "display_order",
+          "concepts"
+        ],
+        "title": "PlanTaskResponse"
+      },
+      "PublicAttemptPage": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/PublicAttemptResponse"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "title": "PublicAttemptPage"
+      },
+      "PublicAttemptResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "publication_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Publication Id"
+          },
+          "answer": {
+            "$ref": "#/components/schemas/QuestionAnswer"
+          },
+          "is_correct": {
+            "type": "boolean",
+            "title": "Is Correct"
+          },
+          "correct_answer": {
+            "$ref": "#/components/schemas/QuestionAnswer"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "answered_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Answered At"
+          },
+          "question_snapshot": {
+            "$ref": "#/components/schemas/PublicQuestionSnapshot"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "publication_id",
+          "answer",
+          "is_correct",
+          "correct_answer",
+          "explanation",
+          "answered_at",
+          "question_snapshot"
+        ],
+        "title": "PublicAttemptResponse"
+      },
+      "PublicQuestionSnapshot": {
+        "properties": {
+          "question_type": {
+            "type": "string",
+            "enum": [
+              "multiple_choice",
+              "short_answer"
+            ],
+            "title": "Question Type"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionOption"
+            },
+            "type": "array",
+            "title": "Options"
+          },
+          "difficulty": {
+            "type": "string",
+            "enum": [
+              "easy",
+              "medium",
+              "hard"
+            ],
+            "title": "Difficulty"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question_type",
+          "prompt",
+          "options",
+          "difficulty"
+        ],
+        "title": "PublicQuestionSnapshot"
+      },
+      "QuestionAnswer": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "multiple_choice",
+              "short_answer"
+            ],
+            "title": "Type"
+          },
+          "selected_option_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Option Ids"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 12000,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "title": "QuestionAnswer"
+      },
+      "QuestionAttemptPage": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionAttemptResponse"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "title": "QuestionAttemptPage"
+      },
+      "QuestionAttemptResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "question_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Question Id"
+          },
+          "question_set_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Question Set Id"
+          },
+          "answer": {
+            "$ref": "#/components/schemas/QuestionAnswer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "grading",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuestionResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Id"
+          },
+          "answered_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Answered At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "question_id",
+          "question_set_id",
+          "answer",
+          "status",
+          "result",
+          "job_id",
+          "answered_at"
+        ],
+        "title": "QuestionAttemptResponse"
+      },
+      "QuestionEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/QuestionResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "QuestionEnvelope"
+      },
+      "QuestionOption": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "QuestionOption"
+      },
+      "QuestionResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "question_type": {
+            "type": "string",
+            "enum": [
+              "multiple_choice",
+              "short_answer"
+            ],
+            "title": "Question Type"
+          },
+          "concept_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Concept Ids"
+          },
+          "concept_version_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Concept Version Ids"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionOption"
+            },
+            "type": "array",
+            "title": "Options"
+          },
+          "difficulty": {
+            "type": "string",
+            "enum": [
+              "easy",
+              "medium",
+              "hard"
+            ],
+            "title": "Difficulty"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "type": "array",
+            "title": "Evidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "question_type",
+          "concept_ids",
+          "concept_version_ids",
+          "prompt",
+          "options",
+          "difficulty",
+          "evidence"
+        ],
+        "title": "QuestionResponse"
+      },
+      "QuestionResult": {
+        "properties": {
+          "is_correct": {
+            "type": "boolean",
+            "title": "Is Correct"
+          },
+          "correct_answer": {
+            "$ref": "#/components/schemas/QuestionAnswer"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "is_correct",
+          "correct_answer",
+          "explanation"
+        ],
+        "title": "QuestionResult"
+      },
+      "ReportItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "concept_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Concept Id"
+          },
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Concept Version Id"
+          },
+          "checklist_item_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Checklist Item Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "explained",
+              "partial",
+              "omission",
+              "error",
+              "unverified"
+            ],
+            "title": "Status"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "title": "Confidence"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "type": "array",
+            "title": "Evidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "concept_id",
+          "concept_version_id",
+          "checklist_item_id",
+          "status",
+          "description",
+          "confidence",
+          "evidence"
+        ],
+        "title": "ReportItem"
+      },
+      "SessionReportEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SessionReportResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "SessionReportEnvelope"
+      },
+      "SessionReportResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Session Id"
+          },
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Concept Version Id"
+          },
+          "version_no": {
+            "type": "integer",
+            "title": "Version No"
+          },
+          "coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage"
+          },
+          "coverage_formula": {
+            "type": "string",
+            "title": "Coverage Formula"
+          },
+          "assessable_count": {
+            "type": "integer",
+            "title": "Assessable Count"
+          },
+          "weighted_score": {
+            "type": "number",
+            "title": "Weighted Score"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReportItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Action"
+          },
+          "action_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "session_id",
+          "concept_version_id",
+          "version_no",
+          "coverage",
+          "coverage_formula",
+          "assessable_count",
+          "weighted_score",
+          "items",
+          "next_action",
+          "action_id"
+        ],
+        "title": "SessionReportResponse"
+      },
+      "SessionSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "concept_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Concept Id"
+          },
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Concept Version Id"
+          },
+          "version_no": {
+            "type": "integer",
+            "title": "Version No"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "explanation_language": {
+            "type": "string",
+            "enum": [
+              "ko",
+              "en"
+            ],
+            "title": "Explanation Language"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "concept_id",
+          "concept_version_id",
+          "version_no",
+          "status",
+          "explanation_language",
+          "started_at"
+        ],
+        "title": "SessionSummary"
+      },
+      "SessionSummaryPage": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SessionSummary"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "title": "SessionSummaryPage"
+      },
+      "StudyPlanEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/StudyPlanResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "StudyPlanEnvelope"
+      },
+      "StudyPlanInput": {
+        "properties": {
+          "exam_goal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Exam Goal Id"
+          },
+          "material_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Material Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "exam_goal_id",
+          "material_ids"
+        ],
+        "title": "StudyPlanInput"
+      },
+      "StudyPlanPage": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/StudyPlanSummary"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "title": "StudyPlanPage"
+      },
+      "StudyPlanResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "exam_goal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Exam Goal Id"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "superseded"
+            ],
+            "title": "Status"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/PlanTaskResponse"
+            },
+            "type": "array",
+            "title": "Tasks"
+          },
+          "material_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Material Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "exam_goal_id",
+          "revision",
+          "status",
+          "generated_at",
+          "tasks",
+          "material_ids"
+        ],
+        "title": "StudyPlanResponse"
+      },
+      "StudyPlanSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "exam_goal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Exam Goal Id"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "superseded"
+            ],
+            "title": "Status"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "material_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Material Ids"
+          },
+          "task_count": {
+            "type": "integer",
+            "title": "Task Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "exam_goal_id",
+          "revision",
+          "status",
+          "generated_at",
+          "material_ids",
+          "task_count"
+        ],
+        "title": "StudyPlanSummary"
+      },
+      "TeachbackEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TeachbackSessionResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "TeachbackEnvelope"
+      },
+      "TeachbackSessionInput": {
+        "properties": {
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Concept Version Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "attempt_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt Id"
+          },
+          "previous_session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Session Id"
+          },
+          "explanation_language": {
+            "type": "string",
+            "enum": [
+              "ko",
+              "en"
+            ],
+            "title": "Explanation Language"
+          },
+          "student_persona": {
+            "type": "string",
+            "enum": [
+              "curious_beginner",
+              "confused_friend",
+              "exam_candidate"
+            ],
+            "title": "Student Persona"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "concept_version_id",
+          "explanation_language",
+          "student_persona"
+        ],
+        "title": "TeachbackSessionInput"
+      },
+      "TeachbackSessionPatch": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "abandoned",
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "TeachbackSessionPatch"
+      },
+      "TeachbackSessionResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "concept_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Concept Id"
+          },
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Concept Version Id"
+          },
+          "version_no": {
+            "type": "integer",
+            "title": "Version No"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "attempt_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt Id"
+          },
+          "previous_session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Session Id"
+          },
+          "explanation_language": {
+            "type": "string",
+            "enum": [
+              "ko",
+              "en"
+            ],
+            "title": "Explanation Language"
+          },
+          "student_persona": {
+            "type": "string",
+            "title": "Student Persona"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "report_pending",
+              "completed",
+              "abandoned"
+            ],
+            "title": "Status"
+          },
+          "question_count": {
+            "type": "integer",
+            "title": "Question Count"
+          },
+          "latest_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Job Id"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "concept_id",
+          "concept_version_id",
+          "version_no",
+          "task_id",
+          "attempt_id",
+          "previous_session_id",
+          "explanation_language",
+          "student_persona",
+          "status",
+          "question_count",
+          "latest_job_id",
+          "started_at",
+          "completed_at"
+        ],
+        "title": "TeachbackSessionResponse"
+      },
+      "TodayEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TodaySummary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "TodayEnvelope"
+      },
+      "TodaySummary": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "title": "Date"
+          },
+          "progress": {
+            "type": "number",
+            "title": "Progress"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/TodayTask"
+            },
+            "type": "array",
+            "title": "Tasks"
+          },
+          "next_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Action"
+          },
+          "exam_goal_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exam Goal Id"
+          },
+          "study_plan_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Study Plan Id"
+          },
+          "days_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Remaining"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "progress",
+          "tasks",
+          "next_action",
+          "exam_goal_id",
+          "study_plan_id",
+          "days_remaining"
+        ],
+        "title": "TodaySummary"
+      },
+      "TodayTask": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "due_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Due Date"
+          },
+          "task_type": {
+            "type": "string",
+            "enum": [
+              "concept",
+              "solve",
+              "teach_back",
+              "review"
+            ],
+            "title": "Task Type"
+          },
+          "concept_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Concept Ids"
+          },
+          "concept_version_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Concept Version Ids"
+          },
+          "target_count": {
+            "type": "integer",
+            "title": "Target Count"
+          },
+          "completed_count": {
+            "type": "integer",
+            "title": "Completed Count"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "completed",
+              "skipped"
+            ],
+            "title": "Status"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "display_order": {
+            "type": "integer",
+            "title": "Display Order"
+          },
+          "concepts": {
+            "items": {
+              "$ref": "#/components/schemas/PlanTaskConcept"
+            },
+            "type": "array",
+            "title": "Concepts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "due_date",
+          "task_type",
+          "concept_ids",
+          "concept_version_ids",
+          "target_count",
+          "completed_count",
+          "status",
+          "completed_at",
+          "title",
+          "display_order",
+          "concepts"
+        ],
+        "title": "TodayTask"
+      },
+      "UserProfile": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "timezone": {
+            "type": "string",
+            "const": "Asia/Seoul",
+            "title": "Timezone"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "display_name",
+          "timezone"
+        ],
+        "title": "UserProfile"
+      },
+      "UserProfileEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/UserProfile"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "UserProfileEnvelope"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "WeaknessPage": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/WeaknessResponse"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "title": "WeaknessPage"
+      },
+      "WeaknessResponse": {
+        "properties": {
+          "concept_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Concept Id"
+          },
+          "concept_name": {
+            "type": "string",
+            "title": "Concept Name"
+          },
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Concept Version Id"
+          },
+          "latest_coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Coverage"
+          },
+          "incorrect_attempts": {
+            "type": "integer",
+            "title": "Incorrect Attempts"
+          },
+          "teachback_count": {
+            "type": "integer",
+            "title": "Teachback Count"
+          },
+          "trend": {
+            "type": "string",
+            "enum": [
+              "improving",
+              "stable",
+              "declining",
+              "unknown"
+            ],
+            "title": "Trend"
+          }
+        },
+        "type": "object",
+        "required": [
+          "concept_id",
+          "concept_name",
+          "concept_version_id",
+          "latest_coverage",
+          "incorrect_attempts",
+          "teachback_count",
+          "trend"
+        ],
+        "title": "WeaknessResponse"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}
