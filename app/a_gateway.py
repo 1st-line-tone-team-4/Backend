@@ -24,6 +24,7 @@ from .models import (
     TeachbackSession,
 )
 from .ports import QuestionTaskState, TaskGateway
+from .projections import attempt_dtos
 
 
 def lock_owned_plan(db, user_id, plan_id, *, active=False):
@@ -300,8 +301,6 @@ class CanonicalTaskGateway(TaskGateway):
             raise
 
     def read_question_attempts(self, session, user_id, set_id, question_ids):
-        from language_learning_api.routers.questions import attempt_dto
-
         user_id, set_id = str(user_id), str(set_id)
         question_set = session.get(QuestionSet, set_id)
         if question_set is None or question_set.user_id != user_id:
@@ -326,9 +325,10 @@ class CanonicalTaskGateway(TaskGateway):
             )
             .order_by(QuestionAttempt.answered_at.desc(), QuestionAttempt.id.desc())
         )
+        latest = {}
         for attempt in attempts:
-            item = result[attempt.question_id]
-            if item["latest_attempt"] is None:
-                item["latest_attempt"] = attempt_dto(attempt, session)
-            item["has_graded_attempt"] |= attempt.status == "graded"
+            latest.setdefault(attempt.question_id, attempt)
+            result[attempt.question_id]["has_graded_attempt"] |= attempt.status == "graded"
+        for attempt in attempt_dtos(latest.values(), session):
+            result[attempt["question_id"]]["latest_attempt"] = attempt
         return result

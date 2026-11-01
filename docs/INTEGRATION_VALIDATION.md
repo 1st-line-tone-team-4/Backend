@@ -75,9 +75,65 @@ Standalone session creation now locks and rechecks its source material/version a
 
 ## Reproducible validation
 
+### N11/N14 and structural follow-up
+
+N11 was reproduced before correction in three signed-JWT loopback HTTP tests.
+Only queued/running jobs now count as busy. Unknown job history, same-answer
+duplicate-cost guards, explicit restart acknowledgment, current-resource checks
+and stale-worker fencing remain. Tests cover changed-answer recovery,
+abandon/new-session/skip/reschedule, new-message continuation, no automatic
+redispatch and the unchanged report-pending policy. MySQL helpers additionally
+exercise stale repeatable-read snapshots and a worker-held latest-job row.
+
+N14 batches plan display pins and progress. Authoritative rescheduling retains
+goal/plan/task locks and raw current reads; it does not replace those reads with
+snapshot aggregates. Measured SELECT counts exclude the unchanged JWT user
+lookup and fixture setup:
+
+| Path / fixture | Before | After |
+| --- | ---: | ---: |
+| Plan detail, 300 tasks | 503 | 6 |
+| Plan detail, 6000 tasks | Not measured | 6 |
+| Today, 300 tasks | 504 | 7 |
+| Plan list, 30 plans | 61 | 3 |
+| Create plan, 300 tasks | 507 | 10 |
+| Reschedule, 300 tasks | 1010 | 18 |
+| Question-set projection, 20 questions, no task gateway | 102 | 5 |
+
+These are query-count regressions, not production latency/load benchmarks.
+Three cursor codecs now share `app/pagination.py` while retaining their existing
+wire formats; four literal cursor fixtures and six stored request digests pin
+compatibility. Request envelopes and strict JSON parsing share neutral helpers.
+`app/projections.py` consolidates question/evidence/attempt projections and
+removes the gateway-to-router dependency cycle. Public integration import paths
+remain aliases. Only graded results expose correct answers, and child evidence queries
+are batched without moving ownership checks out of callers.
+
+The complete module map, request flow and remaining query hot spots are in
+[ARCHITECTURE.md](ARCHITECTURE.md). This refactor does not implement the 13 missing
+operations or decide N10/N12/N13.
+
 Previously recorded baseline Windows/Python 3.12 run, before the N11–N15 follow-up: **539 passed, 1 skipped** in 171.33s. The skip is the explicitly unavailable disposable MySQL URL. Baseline Ruff lint/format, compilation and whitespace checks passed. The only warning is the existing Starlette/httpx test-client deprecation.
 
-The final follow-up test counts, exact commit SHA and CI run are pending integration verification. The baseline result above must not be presented as the result for the updated working tree. N15 documentation checks establish the route inventory and prose/schema diff; they do not substitute for the final full-suite or MySQL run.
+The follow-up Windows/Python 3.12 full suite passed **569 tests, 1 skipped** in
+188.16s. A final test-only ordering case was added after that run's collection;
+the complete projection test module then passed **4 tests**, including that new
+case. No runtime code changed between these runs. Ruff lint/format (81 files),
+compilation and whitespace checks passed. The skip remains the unavailable local
+MySQL URL; the only warning remains Starlette/httpx deprecation. A first run
+found two test fault-injection references to a removed private wrapper; those
+references were updated to the actual shared validation boundary, without
+weakening their stale-state/rollback/provider-call assertions, before the
+successful full run.
+
+An independent source reviewer checked the final runtime snapshot, including
+MySQL lock ordering, ownership, result redaction and cost/fencing rules. A separate
+read-only comparison against the pre-refactor implementations passed 83 cursor,
+request-envelope and digest assertions. These checks support the reviewed paths;
+they do not establish the absence of all defects or resolve the policy decisions
+below. The exact pushed commit's GitHub Actions result is the source of truth for
+the final full CI suite and actual disposable MySQL run. N15 route/schema/prose
+checks and the historical baseline are not substitutes for that run.
 
 From the repository root after the documented editable install:
 

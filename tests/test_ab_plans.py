@@ -621,14 +621,14 @@ def test_generation_acceptance_refreshes_material_after_stale_reads(tmp_path, mo
                 }
                 operation = "createQuestionSet"
             else:
-                get_version = content_module._version
+                get_version = content_module.get_confirmed_version
 
                 def version_boundary(db, *args, **kwargs):
                     version = get_version(db, *args, **kwargs)
                     make_material_stale(db)
                     return version
 
-                monkeypatch.setattr(content_module, "_version", version_boundary)
+                monkeypatch.setattr(content_module, "get_confirmed_version", version_boundary)
                 url = "/v1/learning-explanations"
                 body = {
                     "concept_version_id": content.version_id,

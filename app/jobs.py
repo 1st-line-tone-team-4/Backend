@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 
-from .core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow
+from .core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow, request_envelope
 from .credentials import check_key
 from .key_validation import validate_key_request
 from .models import Job, Material, QuestionSet, LearningExplanation, IdempotencyRequest
@@ -522,12 +522,7 @@ class RestartBody(ModelBody):
 
 
 def request_data(request, body):
-    return {
-        "method": request.method,
-        "path": request.url.path,
-        "query": str(request.url.query),
-        "body": body.model_dump(),
-    }
+    return request_envelope(request, body.model_dump())
 
 
 @router.get("/ai/models")

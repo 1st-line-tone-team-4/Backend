@@ -7,39 +7,17 @@ from uuid import UUID
 from fastapi import APIRouter, Header, Path, Query, Request
 from sqlalchemy import and_, or_, select
 
-from app.content import get_grading_question, question_dto
-from app.core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow
+from app.content import get_grading_question
+from app.core import ApiError, get_context, get_user, idempotent, uid, utcnow
 from app.credentials import check_key
 from app.jobs import accepted
-from app.models import Job, Question, QuestionAttempt
+from app.models import Job, QuestionAttempt
+from app.projections import attempt_dto, attempt_dtos
 from language_learning_api.routers.common import decode_cursor, encode_cursor
 from language_learning_api.schemas import AcceptedEnvelope, AttemptInput, QuestionAttemptPage
 from language_learning_api.services.grading import lock_grading_question, validate_answer
 
 router = APIRouter(tags=["Question attempts"])
-
-
-def attempt_dto(attempt, db):
-    result = None
-    if attempt.status == "graded":
-        question = db.get(Question, attempt.question_id)
-        result = {
-            "is_correct": attempt.is_correct,
-            "feedback": attempt.grading_feedback,
-            "correct_answer": attempt.correct_answer,
-            "explanation": attempt.explanation,
-            "evidence": question_dto(db, question)["evidence"],
-        }
-    return {
-        "id": attempt.id,
-        "question_id": attempt.question_id,
-        "question_set_id": attempt.question_set_id,
-        "answer": attempt.answer,
-        "status": attempt.status,
-        "result": result,
-        "job_id": attempt.job_id,
-        "answered_at": iso(attempt.answered_at),
-    }
 
 
 @router.post("/v1/questions/{questionId}/attempts", response_model=AcceptedEnvelope, status_code=202)
@@ -150,7 +128,7 @@ def list_question_attempts(
             if more and rows
             else None
         )
-        return {"data": [attempt_dto(a, db) for a in rows], "next_cursor": nxt}
+        return {"data": attempt_dtos(rows, db), "next_cursor": nxt}
 
 
 @router.get("/v1/attempts/{attemptId}")
