@@ -94,7 +94,7 @@ def test_auth_pins_algorithm_claims_and_existing_identity(context):
     assert auth.authenticate(request(jwt.encode(claims, private, algorithm="RS256"))) == context.user
     for changes in (
         {"aud": "wrong"},
-        {"sub": "unknown"},
+        {"sub": "x" * 256},
         {"exp": datetime.now(timezone.utc) - timedelta(seconds=1)},
     ):
         with pytest.raises(ApiError):
@@ -103,6 +103,10 @@ def test_auth_pins_algorithm_claims_and_existing_identity(context):
         auth.authenticate(
             request(jwt.encode(claims, "attacker-secret-which-is-long-enough-for-hs256", algorithm="HS256"))
         )
+    first_token = jwt.encode({**claims, "sub": "new-verified-user"}, private, algorithm="RS256")
+    provisioned = auth.authenticate(request(first_token))
+    assert provisioned != context.user
+    assert auth.authenticate(request(first_token)) == provisioned
 
 
 def test_unconfigured_task_gateway_denies():
@@ -182,6 +186,7 @@ def test_sqlite_character_length_is_unicode_aware(context):
 
 def test_mysql_migration_compiles_and_preserves_boundaries():
     from pathlib import Path
+    import re
     from sqlalchemy.schema import CreateTable
     from sqlalchemy.dialects import mysql
     from app.models import Base
@@ -193,12 +198,13 @@ def test_mysql_migration_compiles_and_preserves_boundaries():
     assert "DATETIME(3)" in ddl["ai_jobs"]
     assert "char_length(" in ddl["learning_explanations"]
     baseline = Path("migrations/001_mysql_b_baseline.sql").read_text(encoding="utf-8")
-    for name in ddl:
-        if name not in ("users", "plan_tasks"):
-            assert f"CREATE TABLE {name} (" in baseline
+    # 001 is an immutable B baseline; canonical A tables are added by 005.
+    baseline_tables = set(re.findall(r"CREATE TABLE (\w+) \(", baseline))
+    assert len(baseline_tables) == 18
+    assert baseline_tables <= ddl.keys()
     assert "CREATE TABLE users (" not in baseline
     assert "CREATE TABLE plan_tasks (" not in baseline
-    assert baseline.count("COLLATE utf8mb4_bin") == len(ddl) - 2
+    assert baseline.count("COLLATE utf8mb4_bin") == len(baseline_tables)
     assert "dispatched_at" not in baseline
     additive = Path("migrations/002_mysql_job_operational_columns.sql").read_text(encoding="utf-8")
     assert all(c in additive for c in ("dispatched_at", "credential_ref", "last_polled_at"))

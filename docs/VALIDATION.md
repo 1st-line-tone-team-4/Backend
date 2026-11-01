@@ -1,3 +1,5 @@
+> Historical B-only evidence. Current A+B scope and verification are documented in [INTEGRATION_VALIDATION.md](INTEGRATION_VALIDATION.md). Counts and A integration limitations below describe the earlier B branch.
+
 # B 구현 검증 기록
 
 2026-11-01 로컬 Windows / Python 3.12. Git branch `feature/b-content-pipeline-20261101`.

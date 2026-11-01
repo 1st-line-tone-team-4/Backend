@@ -17,9 +17,10 @@ from jsonschema import Draft202012Validator, FormatChecker
 from sqlalchemy import select
 
 from app.core import uid
-from app.models import Job, LearningExplanation, Question, PlanTask
+from app.models import Job, LearningExplanation, Question
 from app.providers import ProviderFailure
 from tests.support import test_application as make_test_application
+from tests.support import seed_task_reference
 
 CONTRACT = json.loads(
     (Path(__file__).resolve().parents[1] / "contracts/openapi-1.3.0.json").read_text(encoding="utf-8")
@@ -150,8 +151,7 @@ def test_complete_content_pipeline_and_a_boundary(live):
     mid, concept, version = confirmed(live)
     task_id = uid()
     owner_id = live.auth.tokens["test-owner-token"]
-    with live.ctx.db.transaction() as s:
-        s.add(PlanTask(id=task_id))
+    seed_task_reference(live.ctx, owner_id, mid, concept["concept_id"], version["id"], task_id, target=2)
     live.tasks.tasks[task_id] = {
         "owner": owner_id,
         "material": mid,
@@ -420,8 +420,9 @@ def test_task_pinned_to_older_confirmed_version_can_still_generate(live):
     response = live.client.patch(f"/v1/materials/{mid}/concepts", json={"concepts": [item]})
     assert response.status_code == 200, response.text
     task_id = uid()
-    with live.ctx.db.transaction() as s:
-        s.add(PlanTask(id=task_id))
+    seed_task_reference(
+        live.ctx, live.auth.tokens["test-owner-token"], mid, concept["concept_id"], v1["id"], task_id
+    )
     live.tasks.tasks[task_id] = {
         "owner": live.auth.tokens["test-owner-token"],
         "material": mid,

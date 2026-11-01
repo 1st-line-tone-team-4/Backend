@@ -128,6 +128,41 @@ class FixtureProvider:
         raise AssertionError("Unregistered test kind")
 
 
+def seed_task_reference(ctx, owner, material_id, concept_id, version_id, task_id, target=1):
+    """Real canonical rows for older B tests whose gateway remains a test double."""
+    from datetime import date, timedelta
+    from app.models import ExamGoal, StudyPlan, StudyPlanMaterial, PlanTask, PlanTaskConcept
+
+    with ctx.db.transaction() as session:
+        goal = ExamGoal(
+            id=uid(),
+            user_id=owner,
+            title="Fixture goal",
+            exam_type="other",
+            exam_date=date.today() + timedelta(days=10),
+            status="active",
+        )
+        session.add(goal)
+        session.flush()
+        plan = StudyPlan(id=uid(), user_id=owner, exam_goal_id=goal.id, revision=1, status="active")
+        session.add(plan)
+        session.flush()
+        session.add(StudyPlanMaterial(study_plan_id=plan.id, material_id=material_id, ordinal=1))
+        session.add(
+            PlanTask(
+                id=task_id,
+                study_plan_id=plan.id,
+                ordinal=1,
+                due_date=date.today(),
+                task_type="solve",
+                target_count=target,
+                status="pending",
+            )
+        )
+        session.flush()
+        session.add(PlanTaskConcept(task_id=task_id, concept_id=concept_id, concept_version_id=version_id))
+
+
 def test_application(tmp_path, base_url="http://testserver", *, database_url=None, create_schema=True):
     from app.main import create_app
 

@@ -1,85 +1,104 @@
-# Team4 Backend B
+# Team4 Learning Backend — A+B 통합
 
-FastAPI/Python 3.12 기반 B 구현입니다. 사용자가 FastAPI 방향을 확인했습니다. 기준은 [메인 Notion](https://app.notion.com/p/40a5df12680381b58e59e5858da561e6)의 계약 `1.3.0-backend-proposal`입니다. A 기능과 운영 배포는 포함하지 않습니다.
+Python 3.12 / FastAPI 기반 학습 API입니다. A의 목표·계획·채점·Teach-back·학습 기록과 B의 자료·개념·문제·자습 설명을 **하나의 앱, DB, 인증, 비동기 worker**로 실행합니다. 계약 원본은 `contracts/`의 `1.3.0-backend-proposal`이며, 실제 제공 경로는 실행 중인 `/docs`, `/openapi.json`과 [통합 API 안내](docs/API_SPEC_FULL.md)에서 확인합니다.
 
-## 실행과 검증
+## 팀 개발 시작
+
+저장소 루트에서 실행합니다. 유일한 의존성 잠금 파일인 `requirements.lock`으로 설치한 다음 editable install로 `app`과 `src/language_learning_api`를 함께 등록해야 합니다. 이전 A 단독 환경의 `uv.lock`/`uv sync` 설치 절차는 통합 서버에 사용하지 않습니다.
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.lock
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m ruff check app tests
-.\.venv\Scripts\python.exe -m ruff format --check app tests
+.\.venv\Scripts\python.exe -m pip install --no-deps -e .
+.\.venv\Scripts\python.exe -m pytest -q --ignore=tests/test_mysql.py
+.\.venv\Scripts\python.exe -m ruff check app src tests scripts
+.\.venv\Scripts\python.exe -m ruff format --check app src tests scripts
 ```
 
-Linux/macOS에서는 `.venv/bin/python`을 사용합니다. 테스트는 임시 SQLite, private 파일 저장소, 테스트 전용 인증·AI·A gateway를 사용합니다. `tests/test_e2e.py`는 실제 loopback HTTP와 별도 worker 프로세스까지 실행합니다. 로컬 보안 샌드박스가 loopback을 차단하면 해당 실행에만 네트워크 권한이 필요합니다.
+Linux/macOS에서는 `.venv/bin/python`을 사용합니다. 테스트는 임시 SQLite·비공개 저장소와 명시적으로 주입한 인증/provider 대역을 사용합니다. HTTP E2E는 loopback 서버와 별도 worker 프로세스를 실행하므로 실행 환경에서 로컬 통신이 가능해야 합니다. 기본 테스트와 CI는 실제 AI 키나 유료 provider 호출을 사용하지 않습니다.
 
-설정은 `.env.example`의 변수명을 참고해 프로세스 환경/secret manager로 공급합니다. `.env` 자동 로딩이나 기본 운영 비밀키는 없습니다. API 키는 환경 변수에 설정하지 않고 각 요청의 `X-AI-Key`로 전달합니다. 사용자 등록·로그인은 A가 제공하며 `users(auth_issuer,auth_subject)`가 검증된 JWT와 매핑되어야 합니다.
+### DB 준비
+
+팀 개발용 MySQL 8.0.16+ 빈 DB를 준비한 뒤 [마이그레이션 안내](migrations/README.md)에 따라 **000 → 001 → 002 → 003 → 004 → 005**를 한 번씩 적용합니다. MySQL 클라이언트가 설치된 PowerShell에서 다음과 같이 파일별 종료 코드를 검사할 수 있습니다. `DB_HOST`, `DB_USER`, `DB_NAME`은 준비한 개발 DB 값으로 바꾸고 비밀번호는 프롬프트에서 입력합니다.
+
+```powershell
+$migrationFiles = @(
+    '000_mysql_shared_prerequisites.sql', '001_mysql_b_baseline.sql',
+    '002_mysql_job_operational_columns.sql', '003_mysql_active_resource.sql',
+    '004_mysql_fix_final_checks.sql', '005_mysql_canonical_a_schema.sql'
+)
+foreach ($migrationFile in $migrationFiles) {
+    mysql --batch --skip-force --host=DB_HOST --user=DB_USER --password --database=DB_NAME --execute="source migrations/$migrationFile"
+    if ($LASTEXITCODE -ne 0) { throw "Migration failed: $migrationFile" }
+}
+```
+
+첫 오류에서 중단해야 하므로 오류를 무시하는 `--force`를 사용하지 않습니다. 파일 실행 방식은 [MySQL batch 안내](https://dev.mysql.com/doc/refman/8.0/en/batch-mode.html)를 참고합니다. 기존 B004 DB는 `users`의 PK·인증 식별자 UNIQUE·timezone CHECK까지 별도로 확인한 뒤 005만 적용합니다. 자동 guard는 모든 기존 제약을 검증하지 않습니다. 005는 비어 있는 `plan_tasks(id)` 스텁을 확장하며, 작업 이력이 들어 있는 스텁은 임의로 보충하지 않고 거부합니다. 기존 독립 A DB는 별도 데이터 조정 계획이 필요합니다.
+
+`app.models.Base`가 35개 계약 테이블을 모두 정의합니다. `language_learning_api.models`는 같은 클래스를 다시 노출하는 호환 경로입니다. 실험용 A Alembic 이력은 `migrations/legacy_a_experimental/`에 보존되어 있고 Alembic 실행은 명시적으로 차단됩니다. `alembic upgrade head`나 운영 `create_schema()`를 실행하지 않습니다.
+
+### 환경 설정과 서버 실행
+
+[.env.example](.env.example)은 필요한 변수 목록입니다. 앱은 `.env`를 자동으로 읽지 않으므로 프로세스 환경 또는 secret manager로 설정합니다.
+
+| 변수 | 용도 |
+| --- | --- |
+| `PROFILE` | 로컬 개발은 `development`, 운영은 `production`; 기본값은 `production` |
+| `DATABASE_URL` | `mysql+pymysql://…?charset=utf8mb4` |
+| `STORAGE_ROOT`, `PUBLIC_BASE_URL` | 비공개 파일 경로와 클라이언트가 접근할 API 주소 |
+| `SIGNING_SECRET` | 외부에서 공급한 32바이트 이상의 비밀값; 저장소 URL·cursor 서명 |
+| `CREDENTIAL_ENCRYPTION_KEY` | 외부에서 공급한 base64 인코딩 32바이트 AES 키 |
+| `AUTH_PUBLIC_KEY`, `AUTH_ISSUER`, `AUTH_AUDIENCE` | 외부 인증 제공자의 RS256 공개키 PEM·issuer·audience |
+| `ENABLED_MODELS` | 승인한 `openai:<model>` / `anthropic:<model>` ID의 쉼표 구분 목록; 비어 있으면 활성 모델 없음 |
+
+필수 설정과 DB를 준비한 후 같은 환경을 사용하는 두 터미널에서 실행합니다.
 
 ```sh
 python -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
 python -m app.worker
-# 한 작업과 due 삭제 outbox만 처리
+# 필요한 경우 worker 한 회만 실행: 대기 Job 최대 1개와 삭제 outbox 처리
 python -m app.worker --once
 ```
 
-운영은 MySQL 설정, RS256 public key/issuer/audience, HTTPS, 외부에서 공급한 서명키와 AES 키가 필요합니다. 리버스 프록시의 전달 헤더는 신뢰하는 프록시 주소만 허용하세요. 프록시/HTTP client 로그에도 Authorization, X-AI-Key, signed URL query를 기록하지 않아야 합니다. `.env.example`는 실제 비밀값이 아닙니다. `PROFILE=test`만으로 인증 대역이 켜지지 않으며 대역은 테스트 코드가 명시적으로 주입합니다.
+`language_learning_api.main:create_app`도 동일한 factory를 다시 노출합니다. 별도의 A 서버나 A 전용 worker는 없습니다. `/health`는 프로세스 응답 확인용이며 DB·provider 준비 상태를 보증하는 readiness 검사는 아닙니다.
 
-API와 worker는 같은 MySQL, private storage root, AES 키를 사용합니다. 키는 별도 SQLite vault에 AES-256-GCM 암호문으로 최대 15분만 보관하고 terminal 작업에서 폐기합니다. 현재 vault는 같은 호스트/공유 private 파일 경로를 전제로 하므로 여러 호스트 운영에는 별도 TTL secret-store adapter가 필요합니다. OS 파일 권한은 운영자가 service identity 전용으로 설정해야 합니다.
+운영 profile은 MySQL과 HTTPS를 요구합니다. TLS 종료 프록시를 사용하면 신뢰하는 프록시만 전달 헤더를 설정하도록 구성해야 합니다. API와 worker는 같은 DB, storage root, 모델 allowlist, 암호화 키를 사용합니다. 현재 로컬 vault/storage adapter는 동일 호스트 또는 공유 private 경로를 전제로 합니다. 다중 호스트 배포용 분산 secret store는 별도 구현이 필요합니다.
 
-## 구현 API
+## 인증과 프런트엔드 연결
 
-모든 경로 앞에 `/v1`이 붙습니다. 생성 POST에는 `Idempotency-Key`, AI POST에는 `X-AI-Key`가 필요합니다. `/docs`와 `/openapi.json`에는 B 계약만 게시합니다.
+인증 제공자가 발급한 JWT를 `Authorization: Bearer <token>`으로 전달합니다. 서버는 RS256 서명과 `iss`, `aud`, `exp`, `sub`를 검증하며, 처음 인증된 `(issuer, subject)`는 로컬 `users` 행으로 생성합니다. 선택적인 `email`, `name` claim은 길이 검사를 거쳐 첫 생성에 사용합니다. DB collation이 공백이나 대소문자를 같게 보더라도 인증 식별자는 정확히 일치해야 합니다.
 
-| 영역 | 경로 |
-| --- | --- |
-| 자료 | `POST/GET /materials`, `GET/PATCH/DELETE /materials/{materialId}`, `POST /materials/{materialId}/complete` |
-| 근거·단원 | `GET /materials/{materialId}/units`, `/source?page=1`, `/chunks/{chunkId}` |
-| 개념·버전 | `GET/PATCH /materials/{materialId}/concepts`, `GET /materials/{materialId}/concepts/{conceptId}/versions` |
-| 문제 | `POST/GET /question-sets`, `GET /question-sets/{setId}`, `GET /questions/{questionId}` |
-| 자습 설명 | `POST/GET /learning-explanations`, `GET /learning-explanations/{explanationId}` |
-| AI·Job | `GET /ai/models`, `POST /ai/validate-key`, `GET /jobs/{jobId}`, `POST /jobs/{jobId}/retry`, `/restart` |
+**이 서버에는 비밀번호 회원가입·로그인, 토큰 발급·갱신 API가 없습니다.** 팀은 외부 인증 제공자와 클라이언트 로그인 흐름을 먼저 정해야 합니다. `PROFILE=test`만으로 인증 대역이 활성화되지 않으며 테스트 코드가 대역을 명시적으로 주입합니다.
 
-추가 구현인 `PUT/GET /private-storage/{materialId}?token=...`는 목적·사용자·자료·만료가 서명된 private 파일 전송 adapter입니다. 원본 경로 입력이나 임의 URL fetch는 받지 않습니다. 자료 삭제는 DB transaction에서 outbox를 기록하며 worker가 즉시 제거를 시도하고 실패 시 backoff 재시도합니다. worker 중단/저장장치 장애가 지속되면 24시간 제거 목표를 보장할 수 없으므로 운영 모니터링이 필요합니다.
+현재 확인한 프런트엔드 저장소에는 코드나 branch ref가 없어 실행할 UI가 없습니다. 백엔드 연결 확인은 테스트 또는 API 클라이언트로 시작합니다. 브라우저 UI를 다른 origin에서 연결하려면 별도의 CORS 설정이 필요합니다. 현재 앱에는 CORS 미들웨어가 없으므로 같은 origin의 프록시를 쓰거나 허용 origin 정책을 구현해야 합니다.
 
-## A 통합 시작점
+연동 순서는 다음과 같습니다.
 
-1. [분담 계약](https://app.notion.com/p/40a5df12680381189fabfcaa690d1b9f)과 [migration 경계](migrations/README.md)를 먼저 확인합니다. A 소유 `users`, `plan_tasks`를 B migration이 생성하지 않습니다. 테스트의 id-only `PlanTask`는 운영 A 모델이 아닙니다.
-2. A JWT 공급자와 `JWTAuthenticator`를 연결합니다. 기존 인증 시스템이 다른 검증 방식을 쓰면 같은 `authenticate(request)->user_id` 경계를 맞춥니다. 테스트용 헤더 인증을 운영으로 옮기지 않습니다.
-3. `TaskGateway.read_question_task(session, user_id, task_id)`를 구현해 `QuestionTaskState`를 반환하고 `build_context(..., task_gateway=...)`에 전달합니다. A adapter는 같은 transaction에서 소유 plan과 task 행을 잠그고 활성 revision, 소유자, 단원, 고정 버전 집합, task 유형, 목표량과 실제 채점 완료량을 읽습니다. A의 plan 전환·진행량 쓰기도 같은 잠금과 순서를 사용해야 합니다. 공통 `validate_question_task(..., count=...)`가 소유권·활성 revision·정확한 버전 집합·`solve` 유형·`count <= target_count - completed_count`를 검사합니다. 생성은 완료량을 늘리지 않습니다. `material_in_use`, `read_question_attempts`도 A의 owner/참조/set 검사로 구현합니다. 기본 gateway는 task 연결과 자료 삭제를 보수적으로 거부하며, 빈 attempt 결과는 독립 B에 알려진 시도가 없다는 의미입니다.
-4. A는 `materials.get_confirmed_version`과 `content.get_grading_question`을 내부에서 읽습니다. 후자는 정답/채점 근거를 포함하므로 사용자 응답으로 직접 노출하지 않습니다. 공개 문제 GET은 정답을 제외합니다.
-5. A의 `grade/message/report` handler를 공통 JobService에 등록할 수 있습니다. A handler가 자신의 owner/latest-pointer/state lock, `prepare/persist/set_state/is_current/lock_resource`를 구현해야 합니다. B가 A의 프롬프트·채점·보고서 저장을 대신하지 않습니다.
+1. 외부 JWT로 `GET /v1/me`를 확인합니다.
+2. 자료 업로드 → 분석 Job 완료 → 개념 확정으로 B의 실제 자료·버전을 준비합니다.
+3. 목표와 학습 계획을 생성하고 반환된 task·개념 버전 ID를 그대로 사용합니다.
+4. 문제 생성·채점, Teach-back 메시지·리포트는 `202`의 Job을 조회해 완료를 확인합니다.
+5. `/v1/today`와 `/v1/records/*`에서 같은 DB의 결과와 진행 상태를 읽습니다.
 
-자습 설명 생성·열람은 task 완료량이나 coverage를 변경하지 않습니다. 개념 확정은 append-only이며 이전 문제/설명은 생성 당시 버전과 근거를 유지합니다. task에 고정된 과거 confirmed 버전의 문제 생성과 과거 confirmed 버전의 자습 설명도 허용합니다. task가 없는 새 문제세트는 현재 confirmed 버전을 사용합니다.
+AI 단계에는 활성 모델과 요청별 `X-AI-Key`가 필요합니다. 실키 검증이나 유료 생성은 기본 통합 테스트에 포함되지 않으며, 별도로 승인된 경우에만 실행합니다.
 
-## Job과 실패 복구
+## 공유 처리와 보안 경계
 
-worker는 DB 조건부 claim, lease/fencing, 활성 resource/fingerprint 유일 제약을 사용합니다. 외부 호출 전에 dispatch를 영속 기록합니다. 그 뒤 crash/timeout이면 `outcome_unknown`으로 남기고 자동 재호출하지 않습니다. retry는 확정된 호출 전/인증/요청제한 실패만 최대 3회, restart는 새 멱등키와 JSON boolean `acknowledge_possible_duplicate_cost=true`가 필요합니다. 외부 provider의 exactly-once는 보장하지 않습니다.
+- POST는 `Idempotency-Key`를 사용합니다. 같은 키·같은 요청은 재생하고 다른 내용은 `409`로 거부합니다. 키 길이는 16–128자이며 기록은 24시간 유효합니다. PATCH에 POST 멱등성 규칙을 추가하지 않았습니다.
+- 모든 A/B 비동기 작업은 `ai_jobs`와 같은 JobService를 사용합니다. 등록 종류는 `analysis`, `questions`, `learning_explanation`, `grade`, `message`, `report`입니다. `202`는 접수 응답이며 결과 생성 완료가 아닙니다.
+- worker는 lease/fencing과 현재 Job 포인터를 검사합니다. provider 결과가 불확실하면 `outcome_unknown`으로 남기고 자동 재호출하지 않습니다. retry는 재시도 가능한 확정 실패에만 허용되며, restart는 새 키와 `acknowledge_possible_duplicate_cost=true`가 필요합니다.
+- 요청별 AI 키는 암호화된 TTL vault에 최대 15분만 보관합니다. 원문 키를 도메인 DB·로그·Git·일반 환경 변수에 저장하지 않습니다. 프록시도 Authorization, X-AI-Key, signed URL query를 기록하지 않도록 설정합니다.
+- 소스 파일은 비공개 저장소와 목적·소유자·만료가 묶인 서명 URL로 접근합니다. 자료 삭제는 참조 검증과 outbox를 거치며 worker가 실제 파일을 제거합니다. 인증 없는 소스 접근이나 임의 외부 URL 가져오기는 제공하지 않습니다.
+- 확인된 개념 버전과 evidence는 고정됩니다. 계획의 개념 정보와 리포트 항목은 정규화된 행에서 읽으며 JSON 복제본이나 별도 A 테이블에 B 데이터를 복사하지 않습니다. 자습 설명 생성은 task 완료량이나 coverage를 바꾸지 않습니다.
 
-같은 입력의 문제세트를 새로 생성할 때도 기존 `outcome_unknown` 작업이 있으면 매 요청마다 위 동의가 필요합니다. successor의 성공·실패는 이전 호출의 과금 여부를 확정하지 않으므로 경고를 해제하지 않습니다. 같은 입력의 queued/running 작업이 있으면 동의 여부와 무관하게 `JOB_IN_PROGRESS`를 우선 반환합니다.
+provider 생성 제한은 300초, 키 검증은 15초이며 기본 worker lease는 420초입니다. 업로드·출력 크기와 파서 제한, 불확실한 COMMIT 처리 등 기존 보안 경계는 [추가 검수 기록](docs/REVIEW-N-FIXES.md)에 정리되어 있습니다.
 
-공개 취소 API는 원계약에 없어 추가하지 않았습니다. 내부 `JobService.cancel`은 queued 작업을 실패 처리하고 진행 중 외부 호출은 결과 불명으로 남겨 늦은 쓰기를 차단합니다. 성공 결과는 불변입니다.
+## 제공 범위와 검증 자료
 
-## 검증 경계와 구현 차이
+학습 API와 기존 공개 문제 풀이 이력의 개인 조회는 제공하지만, 공개 게시·공개 풀이 생성·점수 인증·결제 API는 이번 통합 범위에 포함되지 않습니다. 관련 계약 테이블이 있다는 사실이 해당 기능 구현을 뜻하지는 않습니다.
 
-- 실제 OpenAI 및 Anthropic fixed-endpoint 어댑터가 있으며 allowlist의 `openai:<model>` 또는 `anthropic:<model>`만 호출합니다. 기본 활성 모델은 없습니다. Anthropic은 공식 Messages API `2026-10-21`과 `x-api-key` 인증을 사용합니다. [공식 문서](https://platform.claude.com/docs/en/manage-claude/authentication)는 API 키의 Bearer 인증도 지원하므로 이전 Bearer 방식이 반드시 401을 유발했다는 주장은 하지 않습니다. 모델의 JSON/multimodal 지원과 실제 과금·품질은 live 확인 전까지 미검증입니다. `GET /models/{model}` 키 검사는 생성을 호출하지 않습니다. 생성은 엄격한 JSON 파싱과 도메인 검증을 통과해야 하며 provider의 constrained-schema mode를 사용한다고 주장하지 않습니다.
-- TXT는 UTF-8, PDF는 pypdf, PNG/JPEG는 Pillow 검증 후 실제 image data를 provider에 전달합니다. 이미지 OCR은 AI가 반환한 전사문을 근거로 쓰고 사람의 개념 확정을 요구합니다. substring/ID 검증은 OCR의 의미 정확성을 보증하지 않습니다. 텍스트 없는 스캔 PDF는 현재 거부됩니다.
-- 원계약 20MiB/200페이지 외에 파서 안전 한도를 추가했습니다: 추출 UTF-8 120,000 bytes, 이미지 40M pixels, 파서 subprocess 20초·프로세스당 동시 2개, PDF 개별 압축해제 8MiB. 초과는 422, 처리 슬롯 부족은 503입니다. POSIX 메모리 1GiB 제한, Windows 768MiB 감시는 best effort이므로 운영 OS/container 제한도 필요합니다. 유효한 대형 파일도 거부될 수 있으며 모든 모델의 context 크기에 맞는다고 보장하지 않습니다.
-- provider 응답은 2MiB, 생성 총 시간은 300초, 키 검증은 15초로 제한합니다. 출력 상한은 분석 16,384 / 문제 12,288 / 자습 설명 4,096 tokens이며 명시적 전역 상한도 적용합니다. worker 기본 lease는 420초이며 생성 300초 + 준비 60초보다 커야 합니다. 모델별 context 지원은 운영 allowlist 설정 시 확인해야 합니다.
-- SQLite 개발 모델과 MySQL migration에 `dispatched_at`, `credential_ref`, `last_polled_at`, `active_resource_id`를 추가했습니다. 원 SQL과 차이는 migration 문서에 기록했습니다. 원 계약 전체 DDL은 참고본이며 자동 실행하지 않습니다.
-- 분석 청크 ID는 같은 job의 재시도에서 안정적으로 재사용하기 위해 job UUID로부터 UUIDv5로 유도합니다. 다른 리소스 ID는 UUIDv4입니다. OpenAPI의 `format: uuid`에는 맞지만 서술형 계약의 일괄 UUIDv4 기본값과는 다른 내부 선택입니다.
-- `.github/workflows/backend-b.yml`은 Linux SQLite 회귀 및 새 MySQL 8.0 service에서 migration+HTTP E2E를 실행합니다. 최초 구현 SHA `259675314c0cf2bb7e4d7120e4206d4907451578`의 [CI에서 두 경로 모두 통과](https://github.com/1st-line-tone-team-4/Backend/actions/runs/41216673636)했습니다. 이후 변경은 해당 SHA의 CI 결과로 확인합니다. `TEST_MYSQL_URL`이 없으면 로컬 MySQL 테스트는 명시적으로 skip됩니다. 실제 A 스키마/운영 DB에 적용한 검증은 아닙니다.
+- [통합 API 경로·상태 안내](docs/API_SPEC_FULL.md), [A 학습 흐름 안내](docs/A_API_SPEC.md)
+- [계약 OpenAPI](contracts/openapi-1.3.0.json), [계약 SQL](contracts/schema-proposal-1.3.0.sql)
+- [마이그레이션 및 기존 DB 제한](migrations/README.md), [검증 기록](docs/VALIDATION.md)
 
-## 승인된 실제 모델 시험 도구
-
-`scripts/live_anthropic_e2e.py`는 별도 승인된 합성 자료 시험 전용입니다. 기본 pytest/CI에서 실행되지 않습니다. 직접 Anthropic API 키로 확인된 지정 파일만 읽고, 실제 키는 메모리 adapter로 처리해 vault/DB/로그/Git에 저장하지 않습니다. 파일 자체를 이동/삭제하지 않습니다. 입력은 UTF-8(BOM 포함), BOM이 있는 UTF-16, ASCII 바이트 패턴이 명확한 BOM 없는 UTF-16과 단일 `ANTHROPIC_API_KEY` 라벨/일치하는 따옴표를 지원합니다. 여러 후보나 내부 공백은 거절하며, 고정 prefix만으로 유효성을 단정하지 않습니다. 장부 잠금·연결·메모리 자격증명은 실패 경로에서도 정리합니다.
-
-선정 모델은 `claude-haiku-5-5`, 출력·추론 합계 상한은 호출당 4,096 tokens입니다. [공식 가격](https://platform.claude.com/docs/en/models/haiku-5-5/overview)의 더 비싼 구간으로 전체 1M 입력 context까지 예약하여 호출당 최대 `$0.51024`, 공통 ledger 8회 상한 `$4.08192`를 적용합니다. 모든 실행에 **같은 ledger**를 사용해야 하며 총 승인 예산 `$10`을 초과할 수 없습니다. 예약은 환급하지 않고 결과불명 시 중단합니다. 실제 usage의 input/output을 별도 기록하며 output에는 reasoning이 포함되어 별도 분해 수치로 추정하지 않습니다. 현재 모델·가격 검증일은 2026-10-31입니다.
-
-실제 사용 전 키의 제공업체/전송 대상, 모델/가격/예산과 합성 데이터 범위를 확인해야 합니다. 연결 실패·키 형식 불일치·결과불명에 자동 재시도하지 않습니다. `scripts/live_provider_smoke.py`는 별도의 사용자 직접 실행용 OpenAI 단일 호출 도구이며 기본 동작은 네트워크 없는 dry-run입니다.
-
-## 계약 출처
-
-`contracts/openapi-1.3.0.json`과 `schema-proposal-1.3.0.sql`은 2026-10-31 메인 Notion의 [전체 OpenAPI](https://app.notion.com/p/40a5df12680381d78000ea80e0c224be), [전체 SQL](https://app.notion.com/p/40a5df126803810ca5acd255c670f44f) 코드블록을 읽은 snapshot입니다. Library 원본 v3와 동일하다는 페이지 설명 및 검토 보고서를 확인했습니다. Library 공식 materialization은 Windows `os.setxattr` 미지원으로 실패했으므로 Library에서 로컬 materialize 성공했다고 주장하지 않습니다.
-
-N1·N3–N9 수정의 근거, 실패 경로와 남은 계약 제약은 [추가 검수 기록](docs/REVIEW-N-FIXES.md)에 정리했습니다.
+CI는 editable install 후 SQLite 회귀와 별도의 disposable MySQL 8.0 검증을 실행하도록 구성되어 있습니다. MySQL fixture는 000–005 체인, 기존 B 데이터 보존, 비어 있지 않은 task 스텁 거부를 확인합니다. 로컬 `TEST_MYSQL_URL`이 없으면 해당 테스트는 명시적으로 skip합니다. 과거 B 전용 SHA의 성공은 현재 통합 SHA나 운영 DB 호환성을 입증하지 않으므로 최종 통합 검증 결과를 별도로 확인해야 합니다.

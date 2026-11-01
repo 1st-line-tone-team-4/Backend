@@ -1,4 +1,6 @@
 import re
+import json
+from pathlib import Path
 import pytest
 from fastapi.openapi.utils import get_openapi
 
@@ -7,7 +9,7 @@ from app.main import build_context
 from tests.support import test_application as make_application
 
 
-def test_published_b_contract_maps_to_real_routes_without_a(tmp_path):
+def test_published_integrated_contract_maps_to_real_routes(tmp_path):
     app = make_application(tmp_path).app
 
     def normalize(value):
@@ -25,9 +27,17 @@ def test_published_b_contract_maps_to_real_routes_without_a(tmp_path):
         if method in ("get", "post", "patch", "delete", "put")
     }
     assert expected <= implemented
-    assert ("get", "/v1/me") not in implemented
-    assert not any("teachback" in path or "billing" in path for _, path in implemented)
-    assert len(expected) == 24
+    assert ("get", "/v1/me") in expected
+    assert ("get", "/v1/today") in expected
+    assert any("teachback" in path for _, path in expected)
+    assert not any(
+        "billing" in path or "score-claims" in path or "publications" in path for _, path in implemented
+    )
+    assert len(expected) == 51
+    documented = json.loads(
+        (Path(__file__).resolve().parents[1] / "docs/openapi-full.json").read_text("utf-8")
+    )
+    assert documented == document
     app.state.context.db.engine.dispose()
 
 

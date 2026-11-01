@@ -185,21 +185,20 @@ def assert_mysql_unknown_uses_current_read(live):
     result, failures = [], []
     paused_once = False
 
-    def pause_before_matching_jobs(conn, cursor, statement, parameters, execution_context, executemany):
+    def pause_before_material_lock(conn, cursor, statement, parameters, execution_context, executemany):
         nonlocal paused_once
-        values = parameters.values() if isinstance(parameters, dict) else parameters
         if (
             statement.lstrip().upper().startswith("SELECT")
-            and "ai_jobs.kind" in statement
-            and "questions" in values
-            and "outcome_unknown" in values
+            and "FROM materials" in statement
+            and "FOR UPDATE" in statement
         ):
             with lock:
                 if paused_once:
                     return
                 paused_once = True
-            # Material and version reads have established the first request's
-            # RR snapshot; the matching-job query has not executed yet.
+            # Idempotency/unit reads established the first request's RR
+            # snapshot. Pause before material locking so another request can
+            # accept its job without waiting on this deliberately paused one.
             paused.set()
             assert resume.wait(timeout=20), "Second request did not complete the unknown outcome"
 
@@ -221,11 +220,11 @@ def assert_mysql_unknown_uses_current_read(live):
     engine = live.ctx.db.engine
     with engine.connect() as conn:
         assert conn.get_isolation_level() == "REPEATABLE READ"
-    event.listen(engine, "before_cursor_execute", pause_before_matching_jobs)
+    event.listen(engine, "before_cursor_execute", pause_before_material_lock)
     thread = Thread(target=first_request, daemon=True)
     try:
         thread.start()
-        assert paused.wait(timeout=10), "First request did not reach matching-job lookup"
+        assert paused.wait(timeout=10), "First request did not reach material locking"
         second = e2e.post(live, "/v1/question-sets", body, idem=second_key)
         assert second.status_code == 202, second.text
         job_id = second.json()["data"]["job"]["id"]
@@ -252,4 +251,4 @@ def assert_mysql_unknown_uses_current_read(live):
     finally:
         resume.set()
         thread.join(timeout=26)
-        event.remove(engine, "before_cursor_execute", pause_before_matching_jobs)
+        event.remove(engine, "before_cursor_execute", pause_before_material_lock)
