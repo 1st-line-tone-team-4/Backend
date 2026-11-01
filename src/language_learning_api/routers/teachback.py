@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.a_gateway import lock_owned_task, task_completed_count
-from app.core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow
+from app.core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow, request_envelope
 from app.credentials import check_key
 from app.jobs import accepted
 from app.materials import evidence_dto, get_confirmed_version
@@ -76,12 +76,7 @@ def message_dto(message):
 
 
 def request_data(request, body):
-    return {
-        "method": request.method,
-        "path": request.url.path,
-        "query": str(request.url.query),
-        "body": body.model_dump(mode="json"),
-    }
+    return request_envelope(request, body.model_dump(mode="json"))
 
 
 def mutate(request, body, operation, action):

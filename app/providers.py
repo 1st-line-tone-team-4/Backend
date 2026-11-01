@@ -16,7 +16,7 @@ from io import BytesIO
 import httpx
 from PIL import Image
 
-from .core import ApiError
+from .core import ApiError, strict_json
 from .credentials import check_key
 
 
@@ -400,20 +400,3 @@ class ProviderRegistry:
                 "stop_reason": stop,
             }
         )
-
-
-def strict_json(value):
-    """Reject non-JSON constants and duplicate keys rather than repairing output."""
-
-    def reject_constant(_):
-        raise ValueError("Non-JSON number")
-
-    def unique_object(pairs):
-        result = {}
-        for key, item in pairs:
-            if key in result:
-                raise ValueError("Duplicate JSON key")
-            result[key] = item
-        return result
-
-    return json.loads(value, parse_constant=reject_constant, object_pairs_hook=unique_object)

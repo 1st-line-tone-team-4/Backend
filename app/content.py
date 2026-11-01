@@ -1,17 +1,15 @@
-import base64
-import json
-import hashlib
-import hmac
 import re
 from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 
-from .core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow
+from .core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow, request_envelope
+from .pagination import content_page as _page
+from .pagination import decode_content_cursor as _cursor_decode  # noqa: F401 - compatibility export
 from .models import (
     Concept,
     ConceptVersion,
@@ -31,6 +29,7 @@ from .models import (
 )
 from .materials import get_confirmed_version, evidence_dto, version_dto
 from .jobs import accepted
+from .projections import question_dto, question_dtos
 
 router = APIRouter()
 
@@ -61,10 +60,6 @@ def missing():
 
 def invalid():
     raise ApiError(422, "INVALID_OUTPUT", "Generated output is invalid.")
-
-
-def _version(session, user, vid, current=False):
-    return get_confirmed_version(session, user, vid, require_current=current)
 
 
 def _generation_material(session, user, material_id):
@@ -110,92 +105,11 @@ def _generation_version_for_acceptance(session, version_id, *, current=False):
     return version
 
 
-def _job_body(job):
-    return accepted(job)
-
-
-def _request_data(request, body):
-    return {
-        "method": request.method,
-        "path": request.url.path,
-        "query": dict(request.query_params),
-        "body": body,
-    }
-
-
 def _owned(session, cls, rid, user):
     obj = session.get(cls, rid)
     if obj is None or obj.user_id != user:
         missing()
     return obj
-
-
-def _cursor_decode(cursor, secret, scope):
-    if not cursor:
-        return None
-    try:
-        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
-        payload, signature = raw.rsplit(b".", 1)
-        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest().encode()
-        if not hmac.compare_digest(signature, expected):
-            raise ValueError()
-        value = json.loads(payload)
-        if (
-            not isinstance(value, dict)
-            or set(value) != {"timestamp", "id", "scope"}
-            or value["scope"] != scope
-        ):
-            raise ValueError()
-        from datetime import datetime
-
-        stamp = datetime.fromisoformat(value["timestamp"])
-        if stamp.tzinfo is not None or str(UUID(value["id"])) != value["id"]:
-            raise ValueError()
-        return stamp, value["id"]
-    except Exception:
-        raise ApiError(422, "INVALID_CURSOR", "Invalid cursor.")
-
-
-def _page(session, stmt, model, limit, cursor, secret, scope):
-    c = _cursor_decode(cursor, secret, scope)
-    if c:
-        stmt = stmt.where(or_(model.created_at < c[0], and_(model.created_at == c[0], model.id < c[1])))
-    rows = list(session.scalars(stmt.limit(limit + 1)))
-    chosen = rows[:limit]
-    next_cursor = None
-    if len(rows) > limit:
-        last = chosen[-1]
-        payload = json.dumps(
-            {"timestamp": last.created_at.isoformat(), "id": last.id, "scope": scope},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-        signature = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest().encode()
-        next_cursor = base64.urlsafe_b64encode(payload + b"." + signature).decode().rstrip("=")
-    return chosen, next_cursor
-
-
-def question_dto(session, q):
-    links = session.scalars(
-        select(QuestionConcept)
-        .where(QuestionConcept.question_id == q.id)
-        .order_by(QuestionConcept.concept_id)
-    ).all()
-    ev = session.scalars(
-        select(QuestionEvidence)
-        .where(QuestionEvidence.question_id == q.id)
-        .order_by(QuestionEvidence.chunk_id)
-    ).all()
-    return {
-        "id": q.id,
-        "question_type": q.question_type,
-        "concept_ids": [x.concept_id for x in links],
-        "concept_version_ids": [x.concept_version_id for x in links],
-        "prompt": q.prompt,
-        "options": q.options,
-        "difficulty": q.difficulty,
-        "evidence": [evidence_dto(session, x.chunk_id) for x in ev],
-    }
 
 
 def get_grading_question(session, user_id, question_id):
@@ -226,10 +140,16 @@ def set_dto(session, s, task_gateway=None):
         if task_gateway and rows
         else {}
     )
+    questions = question_dtos(
+        session,
+        session.scalars(select(Question).where(Question.id.in_([row.question_id for row in rows])))
+        if rows
+        else [],
+    )
     items = [
         {
             "ordinal": x.ordinal,
-            "question": question_dto(session, session.get(Question, x.question_id)),
+            "question": questions[x.question_id],
             "latest_attempt": attempts.get(x.question_id, {}).get("latest_attempt"),
         }
         for x in rows
@@ -308,7 +228,7 @@ def create_set(
         # A plan task pins the exact confirmed versions it was planned with, so a
         # later re-confirmation must not block its practice set. Without a task,
         # only the current confirmed version may be used.
-        versions = [_version(session, user, v) for v in vids]
+        versions = [get_confirmed_version(session, user, v) for v in vids]
         concepts = [session.get(Concept, v.concept_id) for v in versions]
         if any(c.unit_id != unit.id for c in concepts) or len({c.id for c in concepts}) != len(concepts):
             raise ApiError(422, "INVALID_CONCEPT_VERSION", "Versions must belong to the selected unit.")
@@ -374,9 +294,16 @@ def create_set(
         session.flush()
         for v in versions:
             session.add(QuestionSetConcept(set_id=rid, concept_id=v.concept_id, concept_version_id=v.id))
-        return 202, _job_body(job)
+        return 202, accepted(job)
 
-    return idempotent(ctx, user, "createQuestionSet", idempotency_key, _request_data(request, data), action)
+    return idempotent(
+        ctx,
+        user,
+        "createQuestionSet",
+        idempotency_key,
+        request_envelope(request, data, query_as_dict=True),
+        action,
+    )
 
 
 @router.get("/question-sets")
@@ -432,7 +359,7 @@ def create_explanation(
     data = body.model_dump(mode="json")
 
     def action(session):
-        v = _version(session, user, data["concept_version_id"])
+        v = get_confirmed_version(session, user, data["concept_version_id"])
         c = session.get(Concept, v.concept_id)
         m = _generation_material(session, user, c.material_id)
         # Historical confirmed explanations are allowed; only new standalone
@@ -474,10 +401,15 @@ def create_explanation(
                 created_at=utcnow(),
             )
         )
-        return 202, _job_body(job)
+        return 202, accepted(job)
 
     return idempotent(
-        ctx, user, "createLearningExplanation", idempotency_key, _request_data(request, data), action
+        ctx,
+        user,
+        "createLearningExplanation",
+        idempotency_key,
+        request_envelope(request, data, query_as_dict=True),
+        action,
     )
 
 
@@ -490,7 +422,7 @@ def list_explanations(
 ):
     ctx, user = get_context(request), get_user(request)
     with ctx.db.transaction() as session:
-        _version(session, user, str(concept_version_id))
+        get_confirmed_version(session, user, str(concept_version_id))
         stmt = (
             select(LearningExplanation)
             .where(

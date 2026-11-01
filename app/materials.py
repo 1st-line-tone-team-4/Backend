@@ -1,9 +1,6 @@
 from datetime import datetime, timezone
 from dataclasses import dataclass
 import base64
-import json
-import hashlib
-import hmac
 from fastapi import APIRouter, Request, Header, Query
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
@@ -13,6 +10,8 @@ from uuid import UUID
 from sqlalchemy import select, delete, func
 from sqlalchemy.exc import IntegrityError
 from .core import ApiError, get_context, get_user, idempotent, idempotency_replay, uid, utcnow, iso
+from .core import request_envelope as reqdata
+from .pagination import decode_material_cursor, encode_material_cursor
 from .models import (
     Material,
     MaterialUnit,
@@ -26,6 +25,8 @@ from .models import (
     LearningExplanation,
     StorageDeletion,
 )
+
+from .projections import evidence_dto
 
 router = APIRouter()
 
@@ -121,20 +122,6 @@ def current(s, cid):
     )
 
 
-def evidence_dto(s, chunk_id, excerpt=None):
-    c = s.get(MaterialChunk, chunk_id)
-    if not c:
-        err(404, "NOT_FOUND", "Evidence not found.")
-    m = s.get(Material, c.material_id)
-    return {
-        "chunk_id": c.id,
-        "material_id": m.id,
-        "material_name": m.filename,
-        "page_number": c.page_number,
-        "excerpt": c.content if excerpt is None else excerpt,
-    }
-
-
 def version_dto(s, v):
     items = s.scalars(
         select(ConceptChecklistItem)
@@ -201,10 +188,6 @@ class PreparedAnalysis:
     material: MaterialSnapshot
     job_id: str
     payload: dict
-
-
-def reqdata(request, body):
-    return {"method": request.method, "path": request.url.path, "query": str(request.url.query), "body": body}
 
 
 @router.post("/materials")
@@ -392,37 +375,16 @@ def listing(
         if not include_archived:
             q = q.where(Material.archived.is_(False))
         if cursor is not None:
-            try:
-                raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
-                payload, signature = raw.rsplit(b".", 1)
-                expected = hmac.new(ctx.storage.secret, payload, hashlib.sha256).hexdigest().encode()
-                if not hmac.compare_digest(signature, expected):
-                    raise ValueError()
-                o = json.loads(payload)
-                if o["user"] != user or o["archived"] != include_archived:
-                    raise ValueError()
-                dt = datetime.fromisoformat(o["time"])
-                cid = o["id"]
-            except Exception:
-                err(422, "INVALID_CURSOR", "Invalid cursor.")
+            dt, cid = decode_material_cursor(cursor, user, include_archived, ctx.storage.secret)
             q = q.where((Material.created_at < dt) | ((Material.created_at == dt) & (Material.id < cid)))
         rows = s.scalars(q.order_by(Material.created_at.desc(), Material.id.desc()).limit(limit + 1)).all()
         more = len(rows) > limit
         rows = rows[:limit]
         nxt = None
         if more:
-            payload = json.dumps(
-                {
-                    "user": user,
-                    "archived": include_archived,
-                    "time": rows[-1].created_at.isoformat(),
-                    "id": rows[-1].id,
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
-            signature = hmac.new(ctx.storage.secret, payload, hashlib.sha256).hexdigest().encode()
-            nxt = base64.urlsafe_b64encode(payload + b"." + signature).decode().rstrip("=")
+            nxt = encode_material_cursor(
+                rows[-1].created_at, rows[-1].id, user, include_archived, ctx.storage.secret
+            )
         return {"data": [mdto(m) for m in rows], "next_cursor": nxt}
 
 
