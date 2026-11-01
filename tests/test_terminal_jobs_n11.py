@@ -307,7 +307,7 @@ def test_queued_and_running_jobs_still_block_conflicting_actions(terminal_env, k
     assert len(fx.provider.calls) == calls
 
 
-def test_unknown_report_pending_policy_is_unchanged(terminal_env):
+def test_unknown_report_can_be_abandoned_without_losing_history(terminal_env):
     fx = terminal_env
     session_id = new_session(fx).json()["data"]["id"]
     run_job(fx, message(fx, session_id))
@@ -316,10 +316,12 @@ def test_unknown_report_pending_policy_is_unchanged(terminal_env):
     again = post(fx, f"/v1/teachback-sessions/{session_id}/complete", {"model_id": MODEL})
     assert again.status_code == 202 and again.json()["data"]["job"]["id"] == prior.id
     assert again.json()["data"]["job"]["status"] == "outcome_unknown"
-    abandoned = fx.client.patch(f"/v1/teachback-sessions/{session_id}", json={"status": "abandoned"})
-    assert abandoned.status_code == 409 and abandoned.json()["error"]["code"] == "SESSION_NOT_ACTIVE"
     assert new_session(fx).status_code == 409
     assert skip(fx, fx.teach).status_code == 409 and replan(fx).status_code == 409
+    abandoned = fx.client.patch(f"/v1/teachback-sessions/{session_id}", json={"status": "abandoned"})
+    assert abandoned.status_code == 200 and abandoned.json()["data"]["status"] == "abandoned"
+    assert_restart_stale(fx, prior.id)
+    assert skip(fx, fx.teach).status_code == 200 and replan(fx).status_code == 201
     assert_unknown_history(fx, prior)
 
 

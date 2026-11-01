@@ -1228,7 +1228,7 @@
       },
       "patch": {
         "operationId": "abandonSession",
-        "description": "active이고 활성job 없을 때만 abandoned. 완료/보고서대기 세션 변경409. 버린 세션 메시지 이력 보존.",
+        "description": "소유 세션을 abandoned로 포기한다. active이고 queued/running Job이 없으면 허용한다. report_pending도 최신 Job이 같은 소유자·세션의 report Job이고 succeeded/failed/outcome_unknown으로 종료되었으며 저장된 report가 없으면 허용한다. queued/running이면409 JOB_IN_PROGRESS. 이미 completed이거나 report가 저장된 세션의 완료 상태·결과는 변경하지 않고409. 이미 abandoned인 세션에 같은 PATCH를 반복하면 현재 DTO를200으로 반환한다. 이 정리 작업은 연결된 계획/목표가 비활성 또는 task가 skipped여도 가능하며 학습 완료량을 변경하지 않는다. 기존 메시지·latest_job_id·Job 상태/오류/입력·보고서 이력은 삭제하지 않는다. 새 디버깅 원문이나 비밀정보를 저장하지 않으며 기존 소유권·자료 삭제 제한·보존 규칙을 유지한다. 포기 후 기존 Job의 retry/restart는409로 거절한다. 원래 재처리 적격인 Job은 STALE_JOB으로 차단하며, 상태 자체가 부적격이면 기존 JOB_NOT_RETRYABLE/JOB_NOT_RESTARTABLE 오류 순서를 유지한다. 늦은 worker 결과도 저장되지 않는다. 이 PATCH는 상태 설정 자체가 멱등적이며 Idempotency-Key를 추가로 요구하지 않는다.",
         "responses": {
           "200": {
             "description": "성공",
@@ -1476,7 +1476,7 @@
       ],
       "post": {
         "operationId": "completeTeachbackSession",
-        "description": "active+사용자메시지1개이상+활성message job없음. report_pending 전이. report job 실패시 report_pending 유지, job의 retry 정책 사용; 임의 새 complete로 중복 보고서 생성 금지. 성공시 report+모든criteria+action 생성 및 session completed 원자저장. 보고서 terminal실패/unknown은 jobs restart로동일session 복구한다. 질문3개후마지막답변을건너뛰는complete도허용하되생략내용은평가기준에따라누락/확인불가.",
+        "description": "active+사용자메시지1개이상+활성message job없음. report_pending 전이. report job 실패시 report_pending 유지, job의 retry 정책 사용; 임의 새 complete로 중복 보고서 생성 금지. 성공시 report+모든criteria+action 생성 및 session completed 원자저장. 보고서 terminal실패/unknown은 jobs restart로동일session 복구한다. 질문3개후마지막답변을건너뛰는complete도허용하되생략내용은평가기준에따라누락/확인불가. report_pending에서 complete를 다시 호출하면 기존 report Job을202로 반환하고 새 작업을 만들지 않는다. 실패/결과불명은 공통 Job retry/restart로 복구하거나, 최신 보고서 작업이 종료되고 저장된 report가 없으면 세션 PATCH로 포기할 수 있다. 포기해도 기존 대화와 Job 이력을 보존한다.",
         "responses": {
           "202": {
             "description": "성공",

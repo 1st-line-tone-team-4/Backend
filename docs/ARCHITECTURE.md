@@ -107,17 +107,20 @@ python -m pytest -q tests/test_mysql.py
 | 실제 HTTP 통합 | `tests/test_ab_e2e.py`, `test_ab_auth_cursor.py`, `test_review_n_e2e.py` |
 | 작업·비밀값·외부 I/O | `test_jobs.py`, `test_job_runtime_n.py`, `test_credentials_cleanup.py`, `test_key_validation_n.py`, `test_material_storage_n.py` |
 | 계획/terminal guard | `test_ab_plans.py`, `test_plan_queries_n14.py`, `test_terminal_jobs_n11.py` |
+| 보고서 포기·구독 생성 정책 | `test_report_abandon_n12.py`, `test_explanation_subscription_n13.py`: 이력 보존·재진입·worker 경합·동시 생성 결과 |
 | 공유 helper·projection | `test_pagination_compat.py`, `test_projections.py`: 기존 cursor/request 형식, 응답·redaction·조회 수 |
 | DDL·잠금·현재 읽기 | `test_mysql.py`와 해당 boundary helper. SQLite 성공만으로 MySQL 의미를 판단하지 않음 |
 
 기본 테스트는 격리된 DB/storage, 합성 키, 명시적 provider 대역을 사용합니다. Windows HTTP 테스트에는 loopback과 hard-link 생성이 가능한 실행 환경이 필요합니다. CI 정의는 [backend-b.yml](../.github/workflows/backend-b.yml), 최신 실행 결과와 한계는 [통합 검증 기록](INTEGRATION_VALIDATION.md)에서 확인합니다. 구조 변경은 응답 동등성·이전 cursor/replay 호환·소유권·query 증가량으로 검증하며 테스트 개수 자체를 품질 근거로 삼지 않습니다.
 
-## 남은 정책 결정
+## 확정된 복구·구독 정책과 남은 결정
+
+N12: 최신 보고서 Job이 terminal인 `report_pending` 세션은 저장된 보고서가 없으면 포기할 수 있습니다. `queued/running`과 완료 결과는 보호합니다. 포기 PATCH는 반복해도 `200`이고, 비활성 계획·건너뛴 task에서도 정리할 수 있습니다. 대화와 Job 포인터·오류 이력을 보존하며 새 진단 원문이나 비밀정보를 저장하지 않습니다. 포기한 세션의 이전 Job은 retry/restart 및 늦은 결과 저장을 통과하지 못합니다.
+
+N13: 제품은 월 구독 방침이므로 독립 설명의 새 생성에 건별 동의 필드를 추가하지 않습니다. 새 멱등키는 명시적 새 생성 요청이며 같은 키 replay·활성 작업 차단·unknown 자동 재호출 금지는 유지합니다. BYOK의 외부 provider 비용, 공통 restart와 문제 생성 R1, 공개 동의 규칙은 별도입니다. 이 결정이 결제·구독 권한 검증 구현을 뜻하지는 않습니다.
 
 | 항목 | 아직 결정하지 않은 범위 |
 | --- | --- |
 | N10 | 개념 확정 PATCH의 멱등성 정책. POST 규칙을 자동 확대하지 않음 |
-| N12 | 실패한 report와 `report_pending` 세션의 복구/이탈 정책. terminal Job 수정만으로 세션 전이를 임의 변경하지 않음 |
-| N13 | unknown 자습 설명 이후 반복 생성의 중복 비용 동의·동일 요청 판정 정책. 일반 restart 계약과 별도로 합의 필요 |
 
-이 결정들과 미구현 13개 API는 구조 정리로 완료되었다고 간주하지 않습니다.
+N10과 미구현 13개 API는 이번 정책 반영으로 완료되었다고 간주하지 않습니다.
