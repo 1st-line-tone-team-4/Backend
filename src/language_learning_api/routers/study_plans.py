@@ -139,7 +139,7 @@ def _ensure_not_busy(db, owner, tasks):
         ).all()
         jobs = select(Job.id).where(
             Job.user_id == owner,
-            Job.status.in_(["queued", "running", "outcome_unknown"]),
+            Job.status.in_(["queued", "running"]),
             or_(
                 (Job.resource_type == "question_set") & Job.resource_id.in_(sets),
                 (Job.resource_type == "attempt") & Job.resource_id.in_(attempts),
