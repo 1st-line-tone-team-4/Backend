@@ -16,6 +16,13 @@ from tests.mysql_boundary_checks import (
     assert_mysql_unknown_uses_current_read,
 )
 from tests.support import test_application as make_application
+from tests.review_n_boundary_checks import (
+    assert_analysis_preparation_releases_locks,
+    assert_key_validation_releases_transaction,
+    assert_mysql_delete_does_not_gap_lock_first_complete,
+    assert_unknown_job_audit_survives_material_deletion,
+)
+from tests.test_key_validation_n import assert_key_validation_claim_race
 
 
 @pytest.fixture
@@ -79,3 +86,10 @@ def test_mysql_migrations_and_complete_http_pipeline(mysql_live):
     assert_mysql_claim_deadlock(mysql_live)
     e2e.test_complete_content_pipeline_and_a_boundary(mysql_live)
     assert_mysql_unknown_uses_current_read(mysql_live)
+    assert_key_validation_releases_transaction(mysql_live)
+    assert_analysis_preparation_releases_locks(mysql_live)
+    owner = mysql_live.auth.tokens["test-owner-token"]
+    assert_key_validation_claim_race(mysql_live.ctx, owner, expired=False)
+    assert_key_validation_claim_race(mysql_live.ctx, owner, expired=True)
+    assert_mysql_delete_does_not_gap_lock_first_complete(mysql_live)
+    assert_unknown_job_audit_survives_material_deletion(mysql_live)
