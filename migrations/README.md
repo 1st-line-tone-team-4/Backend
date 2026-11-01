@@ -1,41 +1,88 @@
-# B schema migration boundary
+# Canonical A+B schema migrations
 
-`Database.create_schema()` creates B tables plus minimal `users` and
-`plan_tasks` references only for disposable SQLite development and tests. It is
-not a production migration and must not be run against an A database.
+`app.models.Base` is the single ORM registry for all 35 contract tables. The
+`language_learning_api.models` module only reexports those classes. IDs remain
+`CHAR(36)` in MySQL and strings in API/domain code. `Database.create_schema()` is
+for disposable development/tests; it creates the full A+B schema and is not an
+upgrade mechanism.
 
-`001_mysql_b_baseline.sql` is a new-schema MySQL 8.0.16+ InnoDB baseline for
-B tables, generated from the B ORM schema. It deliberately does not create A's
-`users` or `plan_tasks`; both must already exist with compatible `CHAR(36)` IDs,
-UTF8MB4 binary collation, indexes, and InnoDB foreign key support. The existing
-A identity schema must also supply `users.auth_issuer` and `users.auth_subject`
-for JWT mapping. Review and reconcile the actual A schema first. `ai_jobs` is a
-shared job table in the proposal; if it already exists, do not run the baseline
-against it: reconcile its full schema and constraints in an environment-specific
-migration. Never overwrite existing A tables.
+## Active MySQL chain
 
-`002_mysql_job_operational_columns.sql` adds the worker's three internal columns
-after the baseline. They track dispatch, an opaque credential reference, and the
-last poll; no raw credentials are stored. Do not apply it twice or blindly apply
-it to an existing shared jobs table. MySQL DDL can implicitly commit; back up and
-prepare a tested recovery plan before any rollout. Migration ordering is 001, 002, 003, then 004. The third migration enforces one
-queued or running job per resource type and ID, independent of fingerprint. This repository does not provide an automatic production migration runner.
+Use MySQL 8.0.16+ with enforced CHECK constraints, InnoDB and UTF8MB4. Execute
+each file once, in order, stopping at the first error. Do not use a client option
+that continues after SQL errors. No automatic production runner is provided.
 
-The baseline uses `utf8mb4_bin` for case-sensitive strings, with `utf8mb4_0900_bin`
-(no padding) on idempotency keys, `DATETIME(3)`, checks,
-and `LONGTEXT` where the proposal specifies it. MySQL deployment requires an
-explicit review of collation compatibility, existing A
-foreign key types and collations, server version and SQL mode, generated-column
-and check behavior, migration/rollback, concurrency and indexes. CI executes the
-migrations and HTTP pipeline on a disposable MySQL 8.0 service. This does not
-verify the real A schema, production rollout, or all MySQL concurrency races.
+- **New, empty database:** `000_mysql_shared_prerequisites.sql`, then 001–005.
+  000 creates canonical `users` and an empty `plan_tasks(id)` prerequisite. 005
+  expands that task table in place and creates the remaining A tables.
+- **Existing B database already at 004:** apply 005 only after verifying the
+  prerequisites below. Do not rerun 000 or the B baseline.
+- **Existing independent A/other database:** this chain is not a compatible
+  upgrade. Inventory and reconcile its data in a separately reviewed migration.
+  In particular, do not reinterpret `units`, `jobs`, `idempotency_records`, UUID
+  hex IDs, JSON task pins, or JSON report items as the canonical shared schema.
 
-The default task gateway's attempt reader returns an empty dictionary to mean no
-attempts are known to standalone B. It does not establish authoritative A
-progress. Once A is connected, replace it with an owner- and set-scoped adapter
-returning each question's latest attempt and whether any attempt was graded.
+001 is the original B baseline and deliberately excludes `users`/`plan_tasks`.
+002 adds dispatch/credential-reference/poll timestamps; no raw credential is
+stored. 003 prevents multiple active jobs for a resource. 004 applies the final
+MIME/error checks and the material archive default. 005 adds normalized goals,
+plans/pins, attempts, sessions/messages, reports/items/evidence, actions and
+feedback. Publication/public-attempt/score-claim tables complete the contract's
+schema; this migration does not enable sharing, score or billing business routes.
 
-`004_mysql_fix_final_checks.sql` adds the CHECK constraints from the team's
-`erd-fix-final.sql` (F4) for `materials.mime_type` and `ai_jobs.error_code`, and
-the contract's `DEFAULT FALSE` on `materials.archived`. It fails on existing rows
-that violate the checks; inspect data before applying it to a non-empty database.
+## 005 preflight and task-stub boundary
+
+Stop all writers and take a backup before migration. MySQL DDL implicitly commits;
+schema changes are not transactionally rolled back. Check server version, SQL
+mode, FK types/collations and existing data first, and test recovery on a copy.
+
+005 expects the known B 004 schema, a canonical seven-column `users` table and an
+**empty, ID-only `plan_tasks` stub** with binary-collated CHAR(36) IDs. Its temporary
+primary-key guard rejects nonempty stubs, incompatible identity/task columns or
+existing A-domain tables before any persistent table change. The client must stop
+on that error. Disconnecting removes the temporary guard. It never deletes or
+recreates the task table, so existing B foreign-key definitions remain attached.
+
+The guard checks column shape, not every existing index or CHECK. Before an
+existing-B upgrade, separately verify `users` has `PRIMARY KEY (id)`,
+`UNIQUE (auth_issuer, auth_subject)` and `CHECK (timezone = 'Asia/Seoul')`, together
+with the contract's nullability, types and collations. Fresh 000 supplies these
+constraints. Passing the 005 guard does not establish full compatibility of an
+arbitrary preexisting identity schema; reconcile missing constraints/data in a
+separately reviewed migration before using this chain.
+
+A nonempty task stub has no recorded plan, goal, due date, task type or pinned
+concept provenance. There is no safe automatic backfill from an ID alone. Such a
+database requires a separately reviewed, authoritative data migration; do not
+delete task rows, fabricate history, or disable the guard. This repository has
+not inspected or changed any production/independent A database.
+
+On a partial DDL failure, stop and inspect the schema against the backup. 005 is
+intentionally nonrepeatable; it rejects partially-created A tables rather than
+silently claiming success. Restoration or an explicitly reviewed forward repair
+must precede a retry.
+
+## Constraint representation and verification
+
+The canonical contract is `contracts/schema-proposal-1.3.0.sql`. The ORM uses
+VARCHAR plus CHECK for its enum domains; conversion to native MySQL ENUM remains
+a separate policy decision. Dates use UTC `DATETIME(3)`; IDs and normal strings
+use `utf8mb4_bin`. Idempotency keys use no-padding `utf8mb4_0900_bin`. Report
+scores use DECIMAL; multiplying the coverage numerator by `1.0` preserves the
+contract formula while avoiding SQLite integer division during isolated tests.
+Ownership and cross-row business invariants described in the contract remain
+transactional application checks; foreign keys alone do not establish them.
+
+The schema tests compare all contract columns, primary keys, foreign keys,
+unique constraints and checks. Disposable MySQL CI executes 000–005 and the real
+HTTP pipeline. This is evidence for the tested version/configuration, not a
+claim that a production rollout, recovery exercise or every concurrency race
+has been validated.
+
+## Quarantined experimental Alembic history
+
+`legacy_a_experimental/` preserves the original independent A revisions for
+provenance. They declared incompatible duplicate shared tables and are **not**
+an active migration path. `migrations/env.py` fails explicitly on Alembic
+execution; no automatic stamp or conversion is supplied. Do not move those
+revisions back into the active path or run `alembic upgrade head` on this schema.

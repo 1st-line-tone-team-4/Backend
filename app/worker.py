@@ -55,7 +55,7 @@ def run_loop(ctx, stopped, *, once=False, max_consecutive_failures=5):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Backend B durable job worker")
+    parser = argparse.ArgumentParser(description="Integrated learning backend durable job worker")
     parser.add_argument("--once", action="store_true", help="Process at most one queued job and exit")
     args = parser.parse_args(argv)
     from .main import build_context

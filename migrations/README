@@ -1,1 +1,2 @@
-Generic single-database configuration.
+Read README.md. The active schema chain is the numbered MySQL SQL files.
+The incompatible experimental A Alembic revisions are quarantined.

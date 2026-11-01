@@ -1,118 +1,320 @@
+"""Owner-scoped canonical records. Public snapshots never expose private questions."""
+
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Path, Query
-from sqlalchemy import select
+from fastapi import APIRouter, Path, Query, Request
+from sqlalchemy import func, select
+from sqlalchemy.orm import aliased
 
-from language_learning_api.auth import CurrentUser, DatabaseSession
-from language_learning_api.models import (Concept, ConceptVersion, ImprovementAction, Material, Question, QuestionAttempt,
-    PublicAttempt, QuestionSet, SessionReport, TeachbackSession, Unit)
+from app.core import ApiError, get_context, get_user, iso, utcnow
+from app.models import (
+    Concept,
+    ConceptVersion,
+    ImprovementAction,
+    Material,
+    PublicAttempt,
+    QuestionAttempt,
+    QuestionConcept,
+    SessionReport,
+    TeachbackSession,
+)
 from language_learning_api.routers.common import decode_cursor, encode_cursor
-from language_learning_api.schemas import (ImprovementActionPage, ImprovementActionPatch, PublicAttemptPage,
-    SessionSummaryPage, WeaknessPage)
+from language_learning_api.schemas import ImprovementActionPatch
 
-router = APIRouter(prefix="/v1/records", tags=["학습 기록과 취약점"])
+router = APIRouter(prefix="/v1/records", tags=["Learning records"])
+Cursor = Annotated[str | None, Query(max_length=1024)]
+Limit = Annotated[int, Query(ge=1, le=100)]
 
 
-@router.get("/public-attempts", response_model=PublicAttemptPage)
-def list_public_attempts(user: CurrentUser, db: DatabaseSession, cursor: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20):
-    stmt = select(PublicAttempt).where(PublicAttempt.owner_id == user.id)
+def page_query(stmt, column, identity, cursor, filters, secret, limit):
     if cursor:
-        created, item_id = decode_cursor(cursor)
-        stmt = stmt.where((PublicAttempt.answered_at < created) | ((PublicAttempt.answered_at == created) & (PublicAttempt.id < item_id)))
-    rows = list(db.scalars(stmt.order_by(PublicAttempt.answered_at.desc(), PublicAttempt.id.desc()).limit(limit + 1)))
-    more = len(rows) > limit; rows = rows[:limit]
-    return {"data": [{"id": item.id, "publication_id": item.publication_id, "answer": item.answer,
-        "is_correct": item.is_correct, "correct_answer": item.correct_answer, "explanation": item.explanation,
-        "answered_at": item.answered_at, "question_snapshot": item.question_snapshot} for item in rows],
-        "next_cursor": encode_cursor(rows[-1].answered_at, rows[-1].id) if more and rows else None}
+        created, item_id = decode_cursor(cursor, filters, secret=secret)
+        stmt = stmt.where((column < created) | ((column == created) & (identity < item_id)))
+    return stmt.order_by(column.desc(), identity.desc()).limit(limit + 1)
 
 
-@router.get("/sessions", response_model=SessionSummaryPage)
-def list_sessions(user: CurrentUser, db: DatabaseSession, cursor: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20):
-    stmt = select(TeachbackSession).where(TeachbackSession.owner_id == user.id)
-    if cursor:
-        created, item_id = decode_cursor(cursor)
-        stmt = stmt.where((TeachbackSession.started_at < created) | ((TeachbackSession.started_at == created) & (TeachbackSession.id < item_id)))
-    rows = list(db.scalars(stmt.order_by(TeachbackSession.started_at.desc(), TeachbackSession.id.desc()).limit(limit + 1)))
-    more = len(rows) > limit; rows = rows[:limit]
-    return {"data": [{"id": s.id, "concept_id": s.concept_id, "concept_version_id": s.concept_version_id,
-        "version_no": s.version_no, "status": s.status, "explanation_language": s.explanation_language,
-        "started_at": s.started_at} for s in rows],
-        "next_cursor": encode_cursor(rows[-1].started_at, rows[-1].id) if more and rows else None}
+def next_cursor(rows, more, column, filters, secret):
+    return (
+        encode_cursor(getattr(rows[-1], column), rows[-1].id, filters, secret=secret)
+        if more and rows
+        else None
+    )
 
 
-@router.get("/weaknesses", response_model=WeaknessPage)
-def list_weaknesses(user: CurrentUser, db: DatabaseSession, cursor: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20):
-    concepts = list(db.execute(select(Concept, ConceptVersion, Unit).join(ConceptVersion,
-        Concept.current_version_id == ConceptVersion.id).join(Unit, Concept.unit_id == Unit.id)
-        .join(Material, Unit.material_id == Material.id).where(Material.owner_id == user.id,
-        ConceptVersion.status == "confirmed").order_by(Concept.created_at.desc(), Concept.id.desc())))
-    # Cursors for this endpoint use concept creation time, retaining deterministic ordering.
-    if cursor:
-        created, item_id = decode_cursor(cursor)
-        concepts = [row for row in concepts if row[0].created_at < created or (row[0].created_at == created and row[0].id < item_id)]
-    page = concepts[:limit + 1]; more = len(page) > limit; page = page[:limit]
-    output = []
-    for concept, version, _unit in page:
-        reports = list(db.scalars(select(SessionReport).join(TeachbackSession, SessionReport.session_id == TeachbackSession.id)
-            .where(TeachbackSession.owner_id == user.id, SessionReport.concept_version_id == version.id,
-                SessionReport.coverage.is_not(None)).order_by(SessionReport.created_at.desc(), SessionReport.id.desc()).limit(2)))
-        coverage = reports[0].coverage if reports else None
-        if len(reports) < 2: trend = "unknown"
-        else:
-            delta = (reports[0].coverage or 0) - (reports[1].coverage or 0)
-            trend = "improving" if delta > 0.0001 else "declining" if delta < -0.0001 else "stable"
-        sessions = list(db.scalars(select(TeachbackSession.id).where(TeachbackSession.owner_id == user.id,
-            TeachbackSession.concept_version_id == version.id, TeachbackSession.status == "completed")))
-        question_rows = list(db.execute(select(QuestionAttempt, Question).join(Question, QuestionAttempt.question_id == Question.id)
-            .where(QuestionAttempt.owner_id == user.id, QuestionAttempt.status == "succeeded",
-                Question.concept_version_ids.contains([str(version.id)]))))
-        latest_by_question = {}
-        for attempt, question in question_rows:
-            if question.id not in latest_by_question or attempt.answered_at > latest_by_question[question.id].answered_at:
-                latest_by_question[question.id] = attempt
-        incorrect = sum(1 for attempt in latest_by_question.values() if attempt.result and not attempt.result.get("is_correct", True))
-        output.append({"concept_id": concept.id, "concept_name": version.name, "concept_version_id": version.id,
-            "latest_coverage": coverage, "incorrect_attempts": incorrect, "teachback_count": len(sessions), "trend": trend})
-    next_cursor = encode_cursor(page[-1][0].created_at, page[-1][0].id) if more and page else None
-    return {"data": output, "next_cursor": next_cursor}
+def public_answer(answer):
+    field = "selected_option_ids" if answer["type"] == "multiple_choice" else "text"
+    return {"type": answer["type"], field: answer[field]}
 
 
-def action_dto(action: ImprovementAction) -> dict:
-    return {"id": action.id, "report_id": action.report_id, "concept_id": action.concept_id,
-        "text": action.text, "status": action.status, "followup_session_id": action.followup_session_id,
-        "updated_at": action.updated_at}
+def public_snapshot(snapshot):
+    # Allow-list even stored snapshots: older imports may contain private metadata.
+    return {
+        "question_type": snapshot["question_type"],
+        "prompt": snapshot["prompt"],
+        "difficulty": snapshot["difficulty"],
+        "options": [{"id": option["id"], "text": option["text"]} for option in snapshot["options"]],
+    }
 
 
-@router.get("/actions", response_model=ImprovementActionPage)
-def list_actions(user: CurrentUser, db: DatabaseSession, cursor: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20):
-    stmt = select(ImprovementAction).where(ImprovementAction.owner_id == user.id)
-    if cursor:
-        created, item_id = decode_cursor(cursor)
-        stmt = stmt.where((ImprovementAction.updated_at < created) | ((ImprovementAction.updated_at == created) & (ImprovementAction.id < item_id)))
-    rows = list(db.scalars(stmt.order_by(ImprovementAction.updated_at.desc(), ImprovementAction.id.desc()).limit(limit + 1)))
-    more = len(rows) > limit; rows = rows[:limit]
-    return {"data": [action_dto(a) for a in rows], "next_cursor": encode_cursor(rows[-1].updated_at, rows[-1].id) if more and rows else None}
+@router.get("/public-attempts")
+def list_public_attempts(request: Request, cursor: Cursor = None, limit: Limit = 20):
+    ctx, owner = get_context(request), get_user(request)
+    filters = {"owner": owner, "operation": "listPublicAttempts"}
+    with ctx.db.transaction() as db:
+        stmt = select(PublicAttempt).where(PublicAttempt.user_id == owner)
+        rows = list(
+            db.scalars(
+                page_query(
+                    stmt,
+                    PublicAttempt.answered_at,
+                    PublicAttempt.id,
+                    cursor,
+                    filters,
+                    ctx.settings.signing_secret,
+                    limit,
+                )
+            )
+        )
+        more, rows = len(rows) > limit, rows[:limit]
+        # The stored snapshot remains available even if its publication is withdrawn.
+        return {
+            "data": [
+                {
+                    "id": item.id,
+                    "publication_id": item.publication_id,
+                    "answer": public_answer(item.answer),
+                    "is_correct": item.is_correct,
+                    "correct_answer": public_answer(item.correct_answer),
+                    "explanation": item.explanation,
+                    "answered_at": iso(item.answered_at),
+                    "question_snapshot": public_snapshot(item.question_snapshot),
+                }
+                for item in rows
+            ],
+            "next_cursor": next_cursor(rows, more, "answered_at", filters, ctx.settings.signing_secret),
+        }
+
+
+@router.get("/sessions")
+def list_sessions(request: Request, cursor: Cursor = None, limit: Limit = 20):
+    ctx, owner = get_context(request), get_user(request)
+    filters = {"owner": owner, "operation": "listSessionRecords"}
+    with ctx.db.transaction() as db:
+        stmt = select(TeachbackSession).where(TeachbackSession.user_id == owner)
+        rows = list(
+            db.scalars(
+                page_query(
+                    stmt,
+                    TeachbackSession.started_at,
+                    TeachbackSession.id,
+                    cursor,
+                    filters,
+                    ctx.settings.signing_secret,
+                    limit,
+                )
+            )
+        )
+        more, rows = len(rows) > limit, rows[:limit]
+        output = []
+        for session in rows:
+            version = db.get(ConceptVersion, session.concept_version_id)
+            output.append(
+                {
+                    "id": session.id,
+                    "concept_id": version.concept_id,
+                    "concept_version_id": version.id,
+                    "version_no": version.version_no,
+                    "status": session.status,
+                    "explanation_language": session.explanation_language,
+                    "started_at": iso(session.started_at),
+                }
+            )
+        return {
+            "data": output,
+            "next_cursor": next_cursor(rows, more, "started_at", filters, ctx.settings.signing_secret),
+        }
+
+
+@router.get("/weaknesses")
+def list_weaknesses(request: Request, cursor: Cursor = None, limit: Limit = 20):
+    ctx, owner = get_context(request), get_user(request)
+    filters = {"owner": owner, "operation": "listWeaknesses"}
+    with ctx.db.transaction() as db:
+        newer = aliased(ConceptVersion)
+        stmt = select(Concept, ConceptVersion).join(ConceptVersion, ConceptVersion.concept_id == Concept.id)
+        stmt = stmt.join(Material, Material.id == Concept.material_id).where(
+            Material.user_id == owner,
+            ConceptVersion.is_confirmed.is_(True),
+            ~select(newer.id)
+            .where(newer.concept_id == Concept.id, newer.version_no > ConceptVersion.version_no)
+            .exists(),
+        )
+        rows = list(
+            db.execute(
+                page_query(
+                    stmt, Concept.created_at, Concept.id, cursor, filters, ctx.settings.signing_secret, limit
+                )
+            )
+        )
+        more, rows = len(rows) > limit, rows[:limit]
+        output = []
+        for concept, version in rows:
+            reports = db.scalars(
+                select(SessionReport)
+                .join(TeachbackSession, TeachbackSession.id == SessionReport.session_id)
+                .where(
+                    TeachbackSession.user_id == owner,
+                    TeachbackSession.status == "completed",
+                    SessionReport.concept_version_id == version.id,
+                )
+                .order_by(SessionReport.created_at.desc(), SessionReport.id.desc())
+                .limit(2)
+            ).all()
+            coverage = float(reports[0].coverage) if reports and reports[0].coverage is not None else None
+            trend = "unknown"
+            if (
+                len(reports) == 2
+                and all(r.coverage is not None for r in reports)
+                and reports[0].coverage_formula == reports[1].coverage_formula
+            ):
+                delta = float(reports[0].coverage - reports[1].coverage)
+                trend = "improving" if delta > 0.0001 else "declining" if delta < -0.0001 else "stable"
+            count = (
+                db.scalar(
+                    select(func.count(TeachbackSession.id)).where(
+                        TeachbackSession.user_id == owner,
+                        TeachbackSession.concept_version_id == version.id,
+                        TeachbackSession.status == "completed",
+                    )
+                )
+                or 0
+            )
+            later = aliased(QuestionAttempt)
+            attempts = (
+                select(func.count(QuestionAttempt.id))
+                .join(QuestionConcept, QuestionConcept.question_id == QuestionAttempt.question_id)
+                .where(
+                    QuestionAttempt.user_id == owner,
+                    QuestionAttempt.status == "graded",
+                    QuestionAttempt.is_correct.is_(False),
+                    QuestionConcept.concept_version_id == version.id,
+                    ~select(later.id)
+                    .where(
+                        later.user_id == owner,
+                        later.status == "graded",
+                        later.question_id == QuestionAttempt.question_id,
+                        (later.answered_at > QuestionAttempt.answered_at)
+                        | (
+                            (later.answered_at == QuestionAttempt.answered_at)
+                            & (later.id > QuestionAttempt.id)
+                        ),
+                    )
+                    .exists(),
+                )
+            )
+            output.append(
+                {
+                    "concept_id": concept.id,
+                    "concept_name": version.name,
+                    "concept_version_id": version.id,
+                    "latest_coverage": coverage,
+                    "incorrect_attempts": db.scalar(attempts) or 0,
+                    "teachback_count": count,
+                    "trend": trend,
+                }
+            )
+        return {
+            "data": output,
+            "next_cursor": encode_cursor(
+                rows[-1][0].created_at, rows[-1][0].id, filters, secret=ctx.settings.signing_secret
+            )
+            if more and rows
+            else None,
+        }
+
+
+def action_dto(action, report):
+    return {
+        "id": action.id,
+        "report_id": action.report_id,
+        "concept_id": action.concept_id,
+        "text": report.next_action,
+        "status": action.status,
+        "followup_session_id": action.followup_session_id,
+        "updated_at": iso(action.updated_at),
+    }
+
+
+def owned_actions(owner):
+    return (
+        select(ImprovementAction, SessionReport)
+        .join(SessionReport, SessionReport.id == ImprovementAction.report_id)
+        .join(TeachbackSession, TeachbackSession.id == SessionReport.session_id)
+        .where(TeachbackSession.user_id == owner)
+    )
+
+
+@router.get("/actions")
+def list_actions(request: Request, cursor: Cursor = None, limit: Limit = 20):
+    ctx, owner = get_context(request), get_user(request)
+    filters = {"owner": owner, "operation": "listImprovementActions"}
+    with ctx.db.transaction() as db:
+        rows = list(
+            db.execute(
+                page_query(
+                    owned_actions(owner),
+                    ImprovementAction.updated_at,
+                    ImprovementAction.id,
+                    cursor,
+                    filters,
+                    ctx.settings.signing_secret,
+                    limit,
+                )
+            )
+        )
+        more, rows = len(rows) > limit, rows[:limit]
+        return {
+            "data": [action_dto(action, report) for action, report in rows],
+            "next_cursor": encode_cursor(
+                rows[-1][0].updated_at, rows[-1][0].id, filters, secret=ctx.settings.signing_secret
+            )
+            if more and rows
+            else None,
+        }
 
 
 @router.patch("/actions/{actionId}")
-def update_action(action_id: Annotated[UUID, Path(alias="actionId")], body: ImprovementActionPatch,
-    user: CurrentUser, db: DatabaseSession):
-    action = db.scalar(select(ImprovementAction).where(ImprovementAction.id == action_id, ImprovementAction.owner_id == user.id))
-    if action is None: raise HTTPException(404, "NOT_FOUND")
-    if body.followup_session_id:
-        followup = db.scalar(select(TeachbackSession).where(TeachbackSession.id == body.followup_session_id,
-            TeachbackSession.owner_id == user.id, TeachbackSession.concept_id == action.concept_id))
-        if followup is None: raise HTTPException(422, "FOLLOWUP_SESSION_MISMATCH")
-        action.followup_session_id = followup.id
-    if body.status == "completed" and (not action.followup_session_id or
-        db.scalar(select(TeachbackSession.id).where(TeachbackSession.id == action.followup_session_id,
-            TeachbackSession.status == "completed")) is None):
-        raise HTTPException(422, "FOLLOWUP_SESSION_REQUIRED")
-    action.status = body.status; db.commit(); db.refresh(action)
-    return {"data": action_dto(action)}
+def update_action(
+    action_id: Annotated[UUID, Path(alias="actionId")], body: ImprovementActionPatch, request: Request
+):
+    ctx, owner = get_context(request), get_user(request)
+    with ctx.db.transaction() as db:
+        row = db.execute(
+            owned_actions(owner).where(ImprovementAction.id == str(action_id)).with_for_update()
+        ).first()
+        if row is None:
+            raise ApiError(404, "NOT_FOUND", "Action not found.")
+        action, report = row
+        followup_id = str(body.followup_session_id) if body.followup_session_id else None
+        if followup_id:
+            followup = db.scalar(
+                select(TeachbackSession)
+                .join(ConceptVersion, ConceptVersion.id == TeachbackSession.concept_version_id)
+                .where(
+                    TeachbackSession.id == followup_id,
+                    TeachbackSession.user_id == owner,
+                    ConceptVersion.concept_id == action.concept_id,
+                    TeachbackSession.started_at > report.created_at,
+                )
+            )
+            if followup is None:
+                raise ApiError(
+                    422,
+                    "FOLLOWUP_SESSION_MISMATCH",
+                    "Follow-up must be your later session for the same concept.",
+                )
+        # Completion is the user's self-report; it does not alter the immutable report.
+        action.followup_session_id, action.status, action.updated_at = followup_id, body.status, utcnow()
+        db.flush()
+        return {"data": action_dto(action, report)}
