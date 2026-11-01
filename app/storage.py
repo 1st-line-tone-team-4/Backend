@@ -1,7 +1,10 @@
 import base64
 import hashlib
 import hmac
+import os
+import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
 from .core import ApiError
@@ -47,14 +50,49 @@ class LocalStorage:
         except Exception:
             raise ApiError(403, "INVALID_TOKEN", "Storage token is invalid or expired.")
 
-    def write(self, key, data):
+    @contextmanager
+    def staged_write(self, key, data):
         path = self._path(key)
-        # exclusive creation prevents replacement after a signed upload
+        # A private sibling is fully durable before publishing. Hard-link creation
+        # is exclusive on both Windows and POSIX; replace()/rename() could overwrite
+        # an earlier upload. Closing before link/unlink also avoids Windows sharing
+        # conflicts. An interrupted write can leave only an unpublished temp file.
+        temporary = None
         try:
-            with path.open("xb") as f:
-                f.write(data)
-        except FileExistsError:
-            raise ApiError(409, "UPLOAD_EXISTS", "Upload already exists.")
+            fd, temporary = tempfile.mkstemp(prefix=".upload-", dir=self.root)
+            with os.fdopen(fd, "wb") as f:
+                remaining = memoryview(data)
+                while remaining:
+                    written = f.write(remaining)
+                    if written is None or written <= 0:
+                        raise OSError("Upload write did not make progress")
+                    remaining = remaining[written:]
+                f.flush()
+                os.fsync(f.fileno())
+
+            def publish():
+                try:
+                    os.link(temporary, path)
+                except FileExistsError:
+                    raise ApiError(409, "UPLOAD_EXISTS", "Upload already exists.") from None
+
+            yield publish
+        except OSError:
+            raise ApiError(
+                503, "UPLOAD_STORAGE_UNAVAILABLE", "Upload storage is temporarily unavailable."
+            ) from None
+        finally:
+            if temporary is not None:
+                try:
+                    Path(temporary).unlink(missing_ok=True)
+                except OSError:
+                    # Antivirus/indexer handles can temporarily deny cleanup on
+                    # Windows. Never remove the published object or mask success.
+                    pass
+
+    def write(self, key, data):
+        with self.staged_write(key, data) as publish:
+            publish()
 
     def read(self, key):
         try:

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from dataclasses import dataclass
 import base64
 import json
 import hashlib
@@ -11,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from uuid import UUID
 from sqlalchemy import select, delete, func
 from sqlalchemy.exc import IntegrityError
-from .core import ApiError, get_context, get_user, idempotent, uid, utcnow, iso
+from .core import ApiError, get_context, get_user, idempotent, idempotency_replay, uid, utcnow, iso
 from .models import (
     Material,
     MaterialUnit,
@@ -175,6 +176,33 @@ def extract(m, data):
     return extract_bytes(m.mime_type, data)
 
 
+@dataclass(frozen=True)
+class MaterialSnapshot:
+    """Immutable scalar identity; safe to retain after the DB session closes."""
+
+    id: str
+    user_id: str
+    storage_key: str
+    mime_type: str
+    size_bytes: int
+    latest_job_id: str | None
+    processing_status: str
+
+    @classmethod
+    def of(cls, material):
+        return cls(**{name: getattr(material, name) for name in cls.__dataclass_fields__})
+
+    def matches(self, material):
+        return self == self.of(material)
+
+
+@dataclass(frozen=True)
+class PreparedAnalysis:
+    material: MaterialSnapshot
+    job_id: str
+    payload: dict
+
+
 def reqdata(request, body):
     return {"method": request.method, "path": request.url.path, "query": str(request.url.query), "body": body}
 
@@ -246,18 +274,19 @@ async def put_file(materialId: str, request: Request, token: str):
     await run_in_threadpool(extract_bytes, mime_type, content)
 
     def commit():
-        # Re-check under a short row lock; exclusive file creation still rejects
-        # a concurrent second upload of the same key.
-        with ctx.db.transaction() as s:
-            m = owned(s, owner, materialId, True)
-            if (
-                m.processing_status != "upload_pending"
-                or m.storage_key != storage_key
-                or m.mime_type != mime_type
-                or m.size_bytes != size_bytes
-            ):
-                err(409, "UPLOAD_CLOSED", "Upload is closed.")
-            ctx.storage.write(storage_key, content)
+        # Stage and fsync without a DB connection, then re-check under a short
+        # row lock. Only the exclusive hard-link publication occurs while locked.
+        with ctx.storage.staged_write(storage_key, content) as publish:
+            with ctx.db.transaction() as s:
+                m = owned(s, owner, materialId, True)
+                if (
+                    m.processing_status != "upload_pending"
+                    or m.storage_key != storage_key
+                    or m.mime_type != mime_type
+                    or m.size_bytes != size_bytes
+                ):
+                    err(409, "UPLOAD_CLOSED", "Upload is closed.")
+                publish()
 
     await run_in_threadpool(commit)
     return Response(status_code=204)
@@ -293,11 +322,41 @@ def complete(
     ctx = get_context(request)
     user = get_user(request)
 
-    def action(s):
-        m = owned(s, user, materialId, True)
+    request_data = reqdata(request, body.model_dump())
+    replay = idempotency_replay(ctx, user, "completeMaterialUpload", idempotency_key, request_data)
+    if replay is not None:
+        return replay
+    with ctx.db.transaction() as s:
+        m = owned(s, user, materialId)
         if m.archived or m.processing_status != "upload_pending":
             err(409, "INVALID_STATE", "Material cannot be completed.")
-        pages = extract(m, ctx.storage.read(m.storage_key))
+        snapshot = MaterialSnapshot.of(m)
+    # Parsing is bounded by extraction.py and never holds a DB connection. The
+    # immutable object key is checked again with all other mutable state below.
+    source_data = ctx.storage.read(snapshot.storage_key)
+    pages = extract(snapshot, source_data)
+    preflight = getattr(ctx.providers, "preflight", None)
+    if snapshot.mime_type.startswith("image/") and callable(preflight):
+        from .providers import ProviderFailure
+
+        try:
+            preflight(
+                body.model_id,
+                "analysis",
+                {
+                    "image_data_url": "data:"
+                    + snapshot.mime_type
+                    + ";base64,"
+                    + base64.b64encode(source_data).decode()
+                },
+            )
+        except ProviderFailure:
+            err(422, "INVALID_UPLOAD", "Image exceeds the selected provider's processing limits.")
+
+    def action(s):
+        m = owned(s, user, materialId, True)
+        if m.archived or m.processing_status != "upload_pending" or not snapshot.matches(m):
+            err(409, "INVALID_STATE", "Material cannot be completed.")
         m.page_count = len(pages)
         job = ctx.jobs.enqueue(
             s,
@@ -316,9 +375,7 @@ def complete(
 
         return 202, {"data": {"job": job_dto(job)}}
 
-    return idempotent(
-        ctx, user, "completeMaterialUpload", idempotency_key, reqdata(request, body.model_dump()), action
-    )
+    return idempotent(ctx, user, "completeMaterialUpload", idempotency_key, request_data, action)
 
 
 @router.get("/materials")
@@ -560,8 +617,21 @@ def confirm(materialId: str, body: Confirm, request: Request):
 def remove(materialId: str, request: Request):
     ctx = get_context(request)
     user = get_user(request)
+    validate_path_id(materialId)
     with ctx.db.transaction() as s:
+        # Read IDs without range locks, then lock existing primary keys before
+        # material (worker/retry order). An empty MySQL next-key range lock here
+        # would deadlock a concurrent complete() inserting its first job.
+        job_ids = s.scalars(
+            select(Job.id)
+            .where(Job.user_id == user, Job.resource_type == "material", Job.resource_id == materialId)
+            .order_by(Job.id)
+        ).all()
+        jobs = [s.scalar(select(Job).where(Job.id == jid).with_for_update()) for jid in job_ids]
+        jobs = [job for job in jobs if job is not None]
         m = owned(s, user, materialId, True)
+        if m.latest_job_id is not None and m.latest_job_id not in {job.id for job in jobs}:
+            err(409, "MATERIAL_IN_USE", "Material has a new job; try again later.")
         unit_ids = select(MaterialUnit.id).where(MaterialUnit.material_id == m.id)
         if (
             ctx.task_gateway.material_in_use(s, user, m.id)
@@ -569,15 +639,7 @@ def remove(materialId: str, request: Request):
             or s.scalar(
                 select(LearningExplanation.id).where(LearningExplanation.material_id == m.id).limit(1)
             )
-            or s.scalar(
-                select(Job.id)
-                .where(
-                    Job.resource_type == "material",
-                    Job.resource_id == m.id,
-                    Job.status.in_(["queued", "running"]),
-                )
-                .limit(1)
-            )
+            or any(job.status in ("queued", "running") for job in jobs)
         ):
             err(409, "MATERIAL_IN_USE", "Material is referenced; archive it instead.")
         concept_ids = select(Concept.id).where(Concept.material_id == m.id)
@@ -594,14 +656,16 @@ def remove(materialId: str, request: Request):
         s.execute(delete(MaterialUnit).where(MaterialUnit.material_id == m.id))
         m.latest_job_id = None
         s.flush()
-        jobs = s.scalars(
-            select(Job)
-            .where(Job.resource_type == "material", Job.resource_id == m.id)
-            .order_by(Job.created_at.desc())
-        ).all()
         for j in jobs:
-            s.delete(j)
-            s.flush()
+            # Retain outcome/cost audit and predecessor links after content is
+            # removed. An absent material cannot be retried/restarted. No source
+            # text, actionable credential, or dead result URL is retained here.
+            j.request_payload = {}
+            j.result_url = None
+            j.retryable = False
+            if j.credential_ref:
+                ctx.credentials.delete(j.credential_ref)
+                j.credential_ref = None
         s.add(
             StorageDeletion(
                 id=uid(), storage_key=m.storage_key, delete_after=utcnow(), deleted_at=None, attempt_count=0
@@ -653,40 +717,59 @@ class AnalysisHandler:
             }[state]
             m.updated_at = utcnow()
 
-    def prepare(self, s, job):
+    def prepare_snapshot(self, s, job):
         m = owned(s, job.user_id, job.resource_id)
         if not self.is_current(s, job):
             err(409, "STALE_JOB", "Analysis job is stale.")
+        return MaterialSnapshot.of(m)
+
+    def prepare_external(self, snapshot):
+        m = snapshot
         data = self.ctx.storage.read(m.storage_key)
         instructions = "Return exactly {units:[{title,concepts:[{name,summary,checklist_items:[string],evidence:[{chunk_id,quote}]}]}]}. Cite only supplied chunk IDs; each quote must be an exact nonempty substring of that chunk."
         if m.mime_type.startswith("image/"):
             import uuid
 
             extract(m, data)
-            cid = str(uuid.uuid5(uuid.UUID(job.id), "1"))
-            return {
+            cid = str(uuid.uuid5(uuid.UUID(m.latest_job_id), "1"))
+            payload = {
                 "instructions": instructions
                 + " For this image also return source_text: a faithful transcription of visible text; cite the supplied chunk_id and quote exact substrings of source_text.",
                 "image_data_url": "data:" + m.mime_type + ";base64," + base64.b64encode(data).decode(),
                 "chunk_id": cid,
             }
-        return {"instructions": instructions, "chunks": analysis_chunks(m, data, job.id)}
+        else:
+            payload = {"instructions": instructions, "chunks": analysis_chunks(m, data, m.latest_job_id)}
+        return PreparedAnalysis(m, m.latest_job_id, payload)
+
+    def _revalidate_prepared(self, s, job, prepared):
+        m = owned(s, job.user_id, job.resource_id, True)
+        if not self.is_current(s, job) or prepared.job_id != job.id or not prepared.material.matches(m):
+            err(409, "STALE_JOB", "Analysis job is stale.")
+        return m
+
+    def apply_prepared(self, s, job, prepared):
+        self._revalidate_prepared(s, job, prepared)
+        return prepared.payload
+
+    def prepare(self, s, job):
+        # Compatibility for direct handler users. The worker always invokes the
+        # split interface so external storage/parsing runs outside its transaction.
+        return self.prepare_external(self.prepare_snapshot(s, job)).payload
 
     def persist(self, s, job, output):
-        m = owned(s, job.user_id, job.resource_id, True)
-        if not self.is_current(s, job):
-            err(409, "STALE_JOB", "Analysis job is stale.")
-        data = self.ctx.storage.read(m.storage_key)
-        if m.mime_type.startswith("image/"):
-            import uuid
+        prepared = self.prepare_external(self.prepare_snapshot(s, job))
+        return self.persist_prepared(s, job, output, prepared)
 
-            extract(m, data)
+    def persist_prepared(self, s, job, output, prepared):
+        m = self._revalidate_prepared(s, job, prepared)
+        if m.mime_type.startswith("image/"):
             source = output.get("source_text") if isinstance(output, dict) else None
             if not isinstance(source, str) or not source.strip() or len(source) > 100000:
                 err(422, "INVALID_OUTPUT", "Image transcription is invalid.")
             chunks = [
                 {
-                    "id": str(uuid.uuid5(uuid.UUID(job.id), "1")),
+                    "id": prepared.payload["chunk_id"],
                     "page_number": 1,
                     "ordinal": 1,
                     "content": source,
@@ -694,7 +777,7 @@ class AnalysisHandler:
             ]
             output = {k: v for k, v in output.items() if k != "source_text"}
         else:
-            chunks = analysis_chunks(m, data, job.id)
+            chunks = prepared.payload["chunks"]
         cmap = {c["id"]: c for c in chunks}
 
         def invalid():
