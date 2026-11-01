@@ -28,6 +28,7 @@ from tests.test_key_validation_n import assert_key_validation_claim_race
 from tests.ab_support import ab_http_application
 from tests.test_ab_e2e import assert_ab_http_pipeline
 from tests.test_terminal_jobs_n11 import assert_mysql_terminal_history_current_reads
+from tests.test_plan_queries_n14 import assert_mysql_batched_progress_current_read
 from tests.test_ab_teachback import assert_mysql_standalone_link_lock_order
 from tests.test_ab_material_retention import assert_mysql_retained_session_does_not_deadlock_delete
 from tests.test_ab_plans import (
@@ -223,6 +224,7 @@ def test_mysql_migrations_and_complete_http_pipeline(mysql_live, tmp_path):
         assert_mysql_standalone_link_lock_order(integrated, pipeline)
         assert_mysql_retained_session_does_not_deadlock_delete(integrated)
         assert_mysql_terminal_history_current_reads(integrated)
+        assert_mysql_batched_progress_current_read(integrated)
     assert_mysql_exact_jwt_identity(mysql_live)
     assert_mysql_claim_deadlock(mysql_live)
     e2e.test_complete_content_pipeline_and_a_boundary(mysql_live)
