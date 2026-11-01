@@ -4,6 +4,7 @@ import base64
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from io import BytesIO
 import json
 import os
 import sqlite3
@@ -14,6 +15,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from PIL import Image
 from pydantic import ValidationError
 from sqlalchemy import select
 
@@ -585,6 +587,10 @@ def anthropic_response(text='{"page_count":1}', *, stop_reason="end_turn"):
 
 def test_anthropic_non_generating_validation_and_multimodal_request():
     calls, usage = [], []
+    image_buffer = BytesIO()
+    with Image.new("RGB", (1, 1)) as image:
+        image.save(image_buffer, format="PNG")
+    image_data = base64.b64encode(image_buffer.getvalue()).decode("ascii")
 
     def respond(request):
         calls.append(request)
@@ -603,7 +609,7 @@ def test_anthropic_non_generating_validation_and_multimodal_request():
         assert "tools" not in body and "cache_control" not in body
         assert body["messages"][0]["content"][0] == {
             "type": "image",
-            "source": {"type": "base64", "media_type": "image/jpeg", "data": "YQ=="},
+            "source": {"type": "base64", "media_type": "image/png", "data": image_data},
         }
         assert "image_data_url" not in body["messages"][0]["content"][1]["text"]
         assert "JSON" in body["system"]
@@ -616,7 +622,7 @@ def test_anthropic_non_generating_validation_and_multimodal_request():
     assert registry.validate_key(ANTHROPIC_MODEL, KEY) == {"valid": True, "model_id": ANTHROPIC_MODEL}
     assert len(calls) == 1 and not usage
     assert registry.generate(
-        ANTHROPIC_MODEL, KEY, "analysis", {"image_data_url": "data:image/jpeg;base64,YQ=="}
+        ANTHROPIC_MODEL, KEY, "analysis", {"image_data_url": "data:image/png;base64," + image_data}
     ) == {"page_count": 1}
     assert len(calls) == 2
     assert usage == [
