@@ -114,7 +114,7 @@ def latest_job(db, session):
 
 def no_busy_job(db, session):
     job = latest_job(db, session)
-    if job and job.status in {"queued", "running", "outcome_unknown"}:
+    if job and job.status in {"queued", "running"}:
         raise ApiError(409, "JOB_IN_PROGRESS", "Resolve the current job first.")
     return job
 
