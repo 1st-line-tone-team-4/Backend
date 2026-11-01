@@ -91,14 +91,16 @@ AI 단계에는 활성 모델과 요청별 `X-AI-Key`가 필요합니다. 실키
 - 소스 파일은 비공개 저장소와 목적·소유자·만료가 묶인 서명 URL로 접근합니다. 자료 삭제는 참조 검증과 outbox를 거치며 worker가 실제 파일을 제거합니다. 인증 없는 소스 접근이나 임의 외부 URL 가져오기는 제공하지 않습니다.
 - 확인된 개념 버전과 evidence는 고정됩니다. 계획의 개념 정보와 리포트 항목은 정규화된 행에서 읽으며 JSON 복제본이나 별도 A 테이블에 B 데이터를 복사하지 않습니다. 자습 설명 생성은 task 완료량이나 coverage를 바꾸지 않습니다.
 
-provider 생성 제한은 300초, 키 검증은 15초이며 기본 worker lease는 420초입니다. 업로드·출력 크기와 파서 제한, 불확실한 COMMIT 처리 등 기존 보안 경계는 [추가 검수 기록](docs/REVIEW-N-FIXES.md)에 정리되어 있습니다.
+provider 생성 요청의 전체 제한은 300초, 비생성 키 검증은 15초이며 기본 worker lease는 420초입니다. 생성 300초와 준비 예산 60초의 합보다 lease가 반드시 길어야 하므로 생성자에서 `420 > 300 + 60` 조건을 검증합니다. 기존 계약의 provider 60초 문구는 승인된 이 런타임 설정에 맞게 수정했으며, 응답 schema나 retry/restart 정책을 바꾸지 않았습니다. 이는 대기열부터 결과까지의 전체 완료 시간을 보증하는 수치가 아닙니다. 업로드·출력 크기와 파서 제한, 불확실한 COMMIT 처리 등 기존 보안 경계는 [추가 검수 기록](docs/REVIEW-N-FIXES.md)에 정리되어 있습니다.
 
 ## 제공 범위와 검증 자료
 
-학습 API와 기존 공개 문제 풀이 이력의 개인 조회는 제공하지만, 공개 게시·공개 풀이 생성·점수 인증·결제 API는 이번 통합 범위에 포함되지 않습니다. 관련 계약 테이블이 있다는 사실이 해당 기능 구현을 뜻하지는 않습니다.
+전체 계약은 50개 경로·64개 작업이고 통합 서버가 제공하는 범위는 **40개 경로·51개 작업(B24 + A27)**입니다. 공개 게시·공개 풀이 생성·점수 인증·결제 capability의 13개 미구현 작업은 [정확한 차이 목록](docs/INTEGRATION_VALIDATION.md#contract-coverage-and-timing-n15)에 정리했습니다. 구현된 계약 handler의 등록 누락은 발견하지 못했으며, 35개 테이블이 있다는 사실이 빠진 기능의 구현을 뜻하지는 않습니다.
+
+`GET /v1/records/public-attempts`는 구현되어 있으며 소유자의 저장된 개인 snapshot을 조회합니다. 적법하게 준비하거나 가져온 기존 데이터가 있으면 결과를 반환하므로 항상 빈 목록이라고 가정하지 않습니다. 이 조회가 공개 게시나 새로운 공개 풀이 생성 API를 대신하지는 않습니다.
 
 - [통합 API 경로·상태 안내](docs/API_SPEC_FULL.md), [A 학습 흐름 안내](docs/A_API_SPEC.md)
 - [계약 OpenAPI](contracts/openapi-1.3.0.json), [계약 SQL](contracts/schema-proposal-1.3.0.sql)
-- [마이그레이션 및 기존 DB 제한](migrations/README.md), [검증 기록](docs/VALIDATION.md)
+- [마이그레이션 및 기존 DB 제한](migrations/README.md), [통합 검증 및 미결 정책](docs/INTEGRATION_VALIDATION.md), [과거 B 검증 기록](docs/VALIDATION.md)
 
 CI는 editable install 후 SQLite 회귀와 별도의 disposable MySQL 8.0 검증을 실행하도록 구성되어 있습니다. MySQL fixture는 000–005 체인, 기존 B 데이터 보존, 비어 있지 않은 task 스텁 거부를 확인합니다. 로컬 `TEST_MYSQL_URL`이 없으면 해당 테스트는 명시적으로 skip합니다. 과거 B 전용 SHA의 성공은 현재 통합 SHA나 운영 DB 호환성을 입증하지 않으므로 최종 통합 검증 결과를 별도로 확인해야 합니다.
