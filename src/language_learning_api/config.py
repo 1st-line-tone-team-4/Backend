@@ -1,19 +1,7 @@
-from functools import lru_cache
+"""A and B share explicit application configuration; no implicit .env loading."""
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-class Settings(BaseSettings):
-    database_url: str
-    jwt_public_key: str
-    jwt_issuer: str
-    jwt_audience: str
-    jwt_algorithm: str = "RS256"
-    cursor_secret: str
-
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+from app.core import Settings
 
 
-@lru_cache
-def get_settings() -> Settings:
-    return Settings()
+def get_settings():
+    return Settings.from_env()

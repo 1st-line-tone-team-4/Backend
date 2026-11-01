@@ -33,6 +33,11 @@ class ProviderRegistry:
     ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
     ANTHROPIC_VERSION = "2026-10-21"
     MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+    # Serialized UTF-8 user-prompt text, excluding the separately bounded image.
+    # 1 MiB accommodates the 120,000-byte extraction limit even with JSON's
+    # worst-case sixfold escaping plus page/chunk metadata. Larger combined
+    # contexts fail before dispatch; conversation/source text is never truncated.
+    MAX_PROMPT_BYTES = 1024 * 1024
     GENERATION_TIMEOUT_SECONDS = 300
     # Retained for test adapters that shorten the total generation deadline.
     TOTAL_TIMEOUT_SECONDS = GENERATION_TIMEOUT_SECONDS
@@ -223,8 +228,14 @@ class ProviderRegistry:
         prompt = dict(payload)
         image_data_url = prompt.pop("image_data_url", None)
         try:
-            prompt_text = json.dumps(prompt, ensure_ascii=False, allow_nan=False)
-        except (ValueError, TypeError, RecursionError):
+            prompt_parts, prompt_bytes = [], 0
+            for part in json.JSONEncoder(ensure_ascii=False, allow_nan=False).iterencode(prompt):
+                prompt_bytes += len(part.encode("utf-8"))
+                if prompt_bytes > self.MAX_PROMPT_BYTES:
+                    raise ProviderFailure("PROVIDER_UNAVAILABLE")
+                prompt_parts.append(part)
+            prompt_text = "".join(prompt_parts)
+        except (ValueError, TypeError, RecursionError, UnicodeError):
             raise ProviderFailure("PROVIDER_UNAVAILABLE") from None
         content = [{"type": "text", "text": prompt_text}]
         if image_data_url is not None:

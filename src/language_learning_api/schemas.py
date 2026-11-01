@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -191,19 +191,17 @@ class QuestionEnvelope(BaseModel):
     data: QuestionResponse
 
 
-class QuestionAnswer(StrictModel):
-    type: Literal["multiple_choice", "short_answer"]
-    selected_option_ids: list[str] | None = None
-    text: str | None = Field(default=None, min_length=1, max_length=12000)
+class MultipleChoiceAnswer(StrictModel):
+    type: Literal["multiple_choice"]
+    selected_option_ids: list[str] = Field(min_length=1, max_length=1)
 
-    @model_validator(mode="after")
-    def answer_shape(self):
-        if self.type == "multiple_choice":
-            if self.text is not None or not self.selected_option_ids or len(self.selected_option_ids) != 1:
-                raise ValueError("multiple_choice needs exactly one selected_option_id")
-        elif self.selected_option_ids is not None or self.text is None:
-            raise ValueError("short_answer needs text only")
-        return self
+
+class ShortAnswer(StrictModel):
+    type: Literal["short_answer"]
+    text: str = Field(min_length=1, max_length=12000)
+
+
+QuestionAnswer = Annotated[MultipleChoiceAnswer | ShortAnswer, Field(discriminator="type")]
 
 
 class AttemptInput(StrictModel):
@@ -214,8 +212,10 @@ class AttemptInput(StrictModel):
 
 class QuestionResult(BaseModel):
     is_correct: bool
+    feedback: str
     correct_answer: QuestionAnswer
     explanation: str
+    evidence: list[Evidence]
 
 
 class QuestionAttemptResponse(BaseModel):
@@ -223,7 +223,7 @@ class QuestionAttemptResponse(BaseModel):
     question_id: UUID
     question_set_id: UUID
     answer: QuestionAnswer
-    status: Literal["grading", "succeeded", "failed"]
+    status: Literal["grading", "graded", "failed"]
     result: QuestionResult | None
     job_id: UUID
     answered_at: datetime

@@ -1,236 +1,525 @@
-from datetime import datetime, timezone, timedelta
+"""Canonical teach-back API, sharing B auth, idempotency and the durable worker."""
+
 from typing import Annotated
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Path, Query
-from fastapi.encoders import jsonable_encoder
-from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from fastapi import APIRouter, Path, Query, Request
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, OperationalError
 
-from language_learning_api.auth import CurrentUser, DatabaseSession
-from language_learning_api.models import (Concept, ConceptVersion, FeedbackReport, IdempotencyRecord, ImprovementAction,
-    Job, Material, PlanTask, Question, QuestionAttempt, StudyPlan, TeachbackMessage, TeachbackSession, Unit, SessionReport, utc_now)
-from language_learning_api.routers.common import decode_cursor, encode_cursor, request_hash
-from language_learning_api.schemas import (AcceptedEnvelope, CompleteSessionInput, FeedbackEnvelope, FeedbackInput,
-    FinalAnswerInput, MessageInput, MessagePage, SessionReportEnvelope, TeachbackEnvelope,
-    TeachbackSessionInput, TeachbackSessionPatch)
+from app.a_gateway import lock_owned_task, task_completed_count
+from app.core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow
+from app.credentials import check_key
+from app.jobs import accepted
+from app.materials import evidence_dto, get_confirmed_version
+from app.models import (
+    Concept,
+    ConceptChecklistItem,
+    ConceptVersion,
+    ConceptVersionEvidence,
+    FeedbackReport,
+    ImprovementAction,
+    Job,
+    Material,
+    PlanTaskConcept,
+    QuestionAttempt,
+    QuestionConcept,
+    ReportEvidence,
+    ReportItem,
+    SessionMessage,
+    SessionReport,
+    TeachbackSession,
+)
+from language_learning_api.routers.common import encode_opaque_cursor, decode_opaque_cursor
+from language_learning_api.schemas import (
+    CompleteSessionInput,
+    FeedbackInput,
+    FinalAnswerInput,
+    MessageInput,
+    TeachbackSessionInput,
+    TeachbackSessionPatch,
+)
+from language_learning_api.services.teachback_handlers import owned_session
 
-router = APIRouter(tags=["Teach-back"])
-
-
-def session_dto(session: TeachbackSession) -> dict:
-    return {"id": session.id, "concept_id": session.concept_id, "concept_version_id": session.concept_version_id,
-        "version_no": session.version_no, "task_id": session.task_id, "attempt_id": session.attempt_id,
-        "previous_session_id": session.previous_session_id, "explanation_language": session.explanation_language,
-        "student_persona": session.student_persona, "status": session.status, "question_count": session.question_count,
-        "latest_job_id": session.latest_job_id, "started_at": session.started_at, "completed_at": session.completed_at}
-
-
-def message_dto(message: TeachbackMessage) -> dict:
-    return {"id": message.id, "role": message.role, "content": message.content, "input_mode": message.input_mode,
-        "sequence_no": message.sequence_no, "created_at": message.created_at}
-
-
-def job_dto(job: Job) -> dict:
-    return {"id": job.id, "kind": job.kind, "status": job.status, "resource_type": job.resource_type,
-        "resource_id": job.resource_id, "attempt_no": job.attempt_no, "retryable": job.retryable,
-        "error_code": job.error_code, "result_url": job.result_url, "created_at": job.created_at,
-        "updated_at": job.updated_at, "previous_job_id": job.previous_job_id}
-
-
-def get_session(db, owner_id: UUID, session_id: UUID) -> TeachbackSession:
-    session = db.scalar(select(TeachbackSession).where(TeachbackSession.id == session_id, TeachbackSession.owner_id == owner_id))
-    if session is None:
-        raise HTTPException(404, "NOT_FOUND")
-    return session
+router = APIRouter(prefix="/v1", tags=["Teach-back"])
 
 
-def idem(db, owner_id: UUID, op: str, key: str, digest: str):
-    record = db.scalar(select(IdempotencyRecord).where(IdempotencyRecord.owner_id == owner_id,
-        IdempotencyRecord.operation == op, IdempotencyRecord.key == key))
-    if record:
-        created = record.created_at.replace(tzinfo=timezone.utc) if record.created_at.tzinfo is None else record.created_at
-        if datetime.now(timezone.utc) - created >= timedelta(hours=24):
-            db.delete(record); db.flush(); return None
-        if record.request_hash != digest:
-            raise HTTPException(409, "IDEMPOTENCY_CONFLICT")
-        return record.response_body
-    return None
+def session_dto(db, session):
+    version = db.get(ConceptVersion, session.concept_version_id)
+    return {
+        "id": session.id,
+        "concept_id": version.concept_id,
+        "concept_version_id": version.id,
+        "version_no": version.version_no,
+        "task_id": session.task_id,
+        "attempt_id": session.attempt_id,
+        "previous_session_id": session.previous_session_id,
+        "explanation_language": session.explanation_language,
+        "student_persona": session.student_persona,
+        "status": session.status,
+        "question_count": session.question_count,
+        "latest_job_id": session.latest_job_id,
+        "started_at": iso(session.started_at),
+        "completed_at": iso(session.completed_at),
+    }
 
 
-def save_idem(db, owner_id: UUID, op: str, key: str, digest: str, response: dict, status: int = 200):
-    db.add(IdempotencyRecord(owner_id=owner_id, operation=op, key=key, request_hash=digest,
-        response_status=status, response_body=jsonable_encoder(response)))
+def message_dto(message):
+    return {
+        "id": message.id,
+        "role": message.role,
+        "content": message.content,
+        "input_mode": message.input_mode,
+        "sequence_no": message.sequence_no,
+        "created_at": iso(message.created_at),
+    }
 
 
-@router.post("/v1/teachback-sessions", response_model=TeachbackEnvelope, status_code=201)
-def create_session(body: TeachbackSessionInput, user: CurrentUser, db: DatabaseSession,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128)]):
-    op = "POST:/v1/teachback-sessions"; digest = request_hash(body.model_dump(mode="json"))
-    cached = idem(db, user.id, op, idempotency_key, digest)
-    if cached: return cached
-    version = db.get(ConceptVersion, body.concept_version_id)
-    concept = db.get(Concept, version.concept_id) if version else None
-    unit = db.get(Unit, concept.unit_id) if concept else None
-    material = db.get(Material, unit.material_id) if unit else None
-    if not version or not concept or not material or material.owner_id != user.id or version.status != "confirmed" or concept.current_version_id != version.id:
-        raise HTTPException(404, "NOT_FOUND")
-    if body.task_id:
-        task = db.scalar(select(PlanTask).join(StudyPlan).where(PlanTask.id == body.task_id, StudyPlan.owner_id == user.id))
-        if not task: raise HTTPException(404, "NOT_FOUND")
-        if task.task_type != "teach_back" or str(version.id) not in task.concept_version_ids:
-            raise HTTPException(422, "TASK_VERSION_MISMATCH")
-        active = db.scalar(select(TeachbackSession.id).where(TeachbackSession.owner_id == user.id,
-            TeachbackSession.task_id == task.id, TeachbackSession.status.in_(["active", "report_pending"])).limit(1))
-        if active: raise HTTPException(409, "ACTIVE_SESSION_EXISTS")
-    if body.attempt_id:
-        attempt = db.scalar(select(QuestionAttempt).where(QuestionAttempt.id == body.attempt_id, QuestionAttempt.owner_id == user.id))
-        if not attempt: raise HTTPException(404, "NOT_FOUND")
-        question = db.get(Question, attempt.question_id)
-        if attempt.status != "succeeded" or not question or str(concept.id) not in question.concept_ids:
-            raise HTTPException(422, "ATTEMPT_NOT_GRADED_OR_CONCEPT_MISMATCH")
-    if body.previous_session_id:
-        previous = get_session(db, user.id, body.previous_session_id)
-        if previous.concept_id != concept.id: raise HTTPException(422, "CONCEPT_MISMATCH")
-    session = TeachbackSession(owner_id=user.id, concept_id=concept.id, concept_version_id=version.id,
-        version_no=version.version_no, task_id=body.task_id, attempt_id=body.attempt_id,
-        previous_session_id=body.previous_session_id, explanation_language=body.explanation_language,
-        student_persona=body.student_persona, status="active", question_count=0)
-    db.add(session); db.flush()
-    response = {"data": session_dto(session)}
-    save_idem(db, user.id, op, idempotency_key, digest, response, 201)
-    try: db.commit()
-    except IntegrityError:
-        db.rollback(); raise HTTPException(409, "ACTIVE_SESSION_EXISTS")
-    return response
+def request_data(request, body):
+    return {
+        "method": request.method,
+        "path": request.url.path,
+        "query": str(request.url.query),
+        "body": body.model_dump(mode="json"),
+    }
 
 
-@router.get("/v1/teachback-sessions/{sessionId}", response_model=TeachbackEnvelope)
-def get_session_route(session_id: Annotated[UUID, Path(alias="sessionId")], user: CurrentUser, db: DatabaseSession):
-    return {"data": session_dto(get_session(db, user.id, session_id))}
+def mutate(request, body, operation, action):
+    return idempotent(
+        get_context(request),
+        get_user(request),
+        operation,
+        request.headers.get("Idempotency-Key"),
+        request_data(request, body),
+        action,
+    )
 
 
-@router.patch("/v1/teachback-sessions/{sessionId}", response_model=TeachbackEnvelope)
-def abandon_session(session_id: Annotated[UUID, Path(alias="sessionId")], body: TeachbackSessionPatch,
-    user: CurrentUser, db: DatabaseSession):
-    session = get_session(db, user.id, session_id)
-    if session.status != "active": raise HTTPException(409, "SESSION_NOT_ACTIVE")
-    if session.latest_job_id:
-        job = db.get(Job, session.latest_job_id)
-        if job and job.status in ("queued", "running", "outcome_unknown"): raise HTTPException(409, "JOB_IN_PROGRESS")
-    session.status = body.status; db.commit(); db.refresh(session)
-    return {"data": session_dto(session)}
+def latest_job(db, session):
+    if not session.latest_job_id:
+        return None
+    try:
+        # Worker holds job before session. Never wait on that inverse lock order.
+        return db.scalar(
+            select(Job)
+            .where(Job.id == session.latest_job_id, Job.user_id == session.user_id)
+            .with_for_update(nowait=True)
+            .execution_options(populate_existing=True)
+        )
+    except OperationalError as exc:
+        if getattr(exc.orig, "args", [None])[0] == 3572:
+            raise ApiError(409, "JOB_IN_PROGRESS", "A worker is updating the session.") from None
+        raise
 
 
-@router.get("/v1/teachback-sessions/{sessionId}/messages", response_model=MessagePage)
-def list_messages(session_id: Annotated[UUID, Path(alias="sessionId")], user: CurrentUser, db: DatabaseSession,
-    cursor: str | None = None, limit: Annotated[int, Query(ge=1, le=100)] = 20):
-    get_session(db, user.id, session_id)
-    stmt = select(TeachbackMessage).where(TeachbackMessage.session_id == session_id)
-    if cursor:
-        created, item_id = decode_cursor(cursor)
-        stmt = stmt.where((TeachbackMessage.created_at > created) | ((TeachbackMessage.created_at == created) & (TeachbackMessage.id > item_id)))
-    rows = list(db.scalars(stmt.order_by(TeachbackMessage.created_at.asc(), TeachbackMessage.id.asc()).limit(limit + 1)))
-    more = len(rows) > limit; rows = rows[:limit]
-    next_cursor = encode_cursor(rows[-1].created_at, rows[-1].id) if more and rows else None
-    return {"data": [message_dto(m) for m in rows], "next_cursor": next_cursor}
+def no_busy_job(db, session):
+    job = latest_job(db, session)
+    if job and job.status in {"queued", "running", "outcome_unknown"}:
+        raise ApiError(409, "JOB_IN_PROGRESS", "Resolve the current job first.")
+    return job
 
 
-@router.post("/v1/teachback-sessions/{sessionId}/messages", response_model=AcceptedEnvelope, status_code=202)
-def send_message(session_id: Annotated[UUID, Path(alias="sessionId")], body: MessageInput, user: CurrentUser,
-    db: DatabaseSession, idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128)],
-    ai_key: Annotated[str, Header(alias="X-AI-Key", min_length=1, max_length=512)]):
-    session = get_session(db, user.id, session_id)
-    op = f"POST:/v1/teachback-sessions/{session_id}/messages"; digest = request_hash(body.model_dump(mode="json"))
-    cached = idem(db, user.id, op, idempotency_key, digest)
-    if cached: return cached
-    if session.status != "active": raise HTTPException(409, "SESSION_NOT_ACTIVE")
-    if session.question_count >= 3: raise HTTPException(422, "QUESTION_LIMIT_REACHED")
-    if session.latest_job_id:
-        latest = db.get(Job, session.latest_job_id)
-        if latest and latest.status in ("queued", "running", "outcome_unknown"): raise HTTPException(409, "JOB_IN_PROGRESS")
-    job = Job(owner_id=user.id, kind="message", status="queued", resource_type="session", resource_id=session.id, model_id=body.model_id)
-    db.add(job); db.flush()
-    seq = (db.scalar(select(func.max(TeachbackMessage.sequence_no)).where(TeachbackMessage.session_id == session.id)) or 0) + 1
-    msg = TeachbackMessage(session_id=session.id, role="user", content=body.content, input_mode=body.input_mode, sequence_no=seq)
-    db.add(msg); session.latest_job_id = job.id; db.flush()
-    response = {"data": {"job": job_dto(job)}}
-    save_idem(db, user.id, op, idempotency_key, digest, response, 202)
-    db.commit(); return response
+def last_message(db, session_id):
+    return db.scalar(
+        select(SessionMessage)
+        .where(SessionMessage.session_id == session_id)
+        .order_by(SessionMessage.sequence_no.desc())
+        .limit(1)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
 
 
-@router.post("/v1/teachback-sessions/{sessionId}/complete", response_model=AcceptedEnvelope, status_code=202)
-def complete_session(session_id: Annotated[UUID, Path(alias="sessionId")], body: CompleteSessionInput,
-    user: CurrentUser, db: DatabaseSession,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128)],
-    ai_key: Annotated[str, Header(alias="X-AI-Key", min_length=1, max_length=512)]):
-    session = get_session(db, user.id, session_id)
-    op = f"POST:/v1/teachback-sessions/{session_id}/complete"; digest = request_hash(body.model_dump(mode="json"))
-    cached = idem(db, user.id, op, idempotency_key, digest)
-    if cached: return cached
-    if session.status == "report_pending" and session.latest_job_id:
-        job = db.get(Job, session.latest_job_id)
-        if job and job.kind == "report": return {"data": {"job": job_dto(job)}}
-    if session.status != "active": raise HTTPException(409, "SESSION_NOT_ACTIVE")
-    user_messages = db.scalar(select(func.count(TeachbackMessage.id)).where(TeachbackMessage.session_id == session.id, TeachbackMessage.role == "user")) or 0
-    if user_messages < 1: raise HTTPException(422, "MESSAGE_REQUIRED")
-    if session.latest_job_id:
-        latest = db.get(Job, session.latest_job_id)
-        if latest and latest.status in ("queued", "running", "outcome_unknown"): raise HTTPException(409, "JOB_IN_PROGRESS")
-    job = Job(owner_id=user.id, kind="report", status="queued", resource_type="session", resource_id=session.id, model_id=body.model_id)
-    db.add(job); db.flush(); session.latest_job_id = job.id; session.status = "report_pending"
-    response = {"data": {"job": job_dto(job)}}
-    save_idem(db, user.id, op, idempotency_key, digest, response, 202)
-    db.commit(); return response
+def lock_standalone_version(db, owner, version_id):
+    """Serialize a new standalone reference with material deletion.
+
+    Locate the parent without locks, then use current reads in the same order as
+    deletion: material before concept/version. Historical confirmed pins remain
+    valid; a repeatable-read snapshot must not resurrect a deleted source.
+    """
+    material_id = db.scalar(
+        select(Concept.material_id)
+        .join(ConceptVersion, ConceptVersion.concept_id == Concept.id)
+        .where(ConceptVersion.id == version_id)
+    )
+    material = db.scalar(
+        select(Material)
+        .where(Material.id == material_id, Material.user_id == owner)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if material is None:
+        raise ApiError(404, "NOT_FOUND", "Concept version not found.")
+    version = db.scalar(
+        select(ConceptVersion)
+        .join(Concept, Concept.id == ConceptVersion.concept_id)
+        .where(ConceptVersion.id == version_id, Concept.material_id == material.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if version is None:
+        raise ApiError(404, "NOT_FOUND", "Concept version not found.")
+    if not version.is_confirmed:
+        raise ApiError(422, "CONCEPT_NOT_CONFIRMED", "Concept version is not confirmed.")
+    return version
 
 
-@router.get("/v1/teachback-sessions/{sessionId}/report", response_model=SessionReportEnvelope)
-def get_report(session_id: Annotated[UUID, Path(alias="sessionId")], user: CurrentUser, db: DatabaseSession):
-    get_session(db, user.id, session_id)
-    report = db.scalar(select(SessionReport).where(SessionReport.session_id == session_id))
-    if report is None: raise HTTPException(409, "REPORT_NOT_READY")
-    return {"data": {"id": report.id, "session_id": report.session_id, "concept_version_id": report.concept_version_id,
-        "version_no": report.version_no, "coverage": report.coverage, "coverage_formula": report.coverage_formula,
-        "assessable_count": report.assessable_count, "weighted_score": report.weighted_score,
-        "items": report.items, "next_action": report.next_action, "action_id": report.action_id}}
+@router.post("/teachback-sessions", status_code=201)
+def create_session(body: TeachbackSessionInput, request: Request):
+    owner = get_user(request)
+
+    def action(db):
+        task_id = str(body.task_id) if body.task_id else None
+        version = (
+            get_confirmed_version(db, owner, str(body.concept_version_id))
+            if task_id
+            else lock_standalone_version(db, owner, str(body.concept_version_id))
+        )
+        if task_id:
+            _, task = lock_owned_task(db, owner, task_id, task_type="teach_back")
+            if not db.scalar(
+                select(PlanTaskConcept.task_id).where(
+                    PlanTaskConcept.task_id == task_id, PlanTaskConcept.concept_version_id == version.id
+                )
+            ):
+                raise ApiError(422, "TASK_VERSION_MISMATCH", "Task does not pin this version.")
+            if db.scalar(
+                select(TeachbackSession.id)
+                .where(
+                    TeachbackSession.user_id == owner,
+                    TeachbackSession.task_id == task_id,
+                    TeachbackSession.status.in_(("active", "report_pending")),
+                )
+                .with_for_update()
+                .limit(1)
+            ):
+                raise ApiError(409, "ACTIVE_SESSION_EXISTS", "Task already has an active session.")
+            if task_completed_count(db, task, owner, authoritative=True) >= task.target_count:
+                raise ApiError(409, "TASK_COMPLETED", "Task target is already complete.")
+        attempt_id = str(body.attempt_id) if body.attempt_id else None
+        if attempt_id:
+            attempt = db.scalar(
+                select(QuestionAttempt).where(
+                    QuestionAttempt.id == attempt_id, QuestionAttempt.user_id == owner
+                )
+            )
+            if not attempt:
+                raise ApiError(404, "NOT_FOUND", "Attempt not found.")
+            if attempt.status != "graded" or not db.scalar(
+                select(QuestionConcept.question_id).where(
+                    QuestionConcept.question_id == attempt.question_id,
+                    QuestionConcept.concept_id == version.concept_id,
+                )
+            ):
+                raise ApiError(
+                    422, "ATTEMPT_NOT_GRADED_OR_CONCEPT_MISMATCH", "Attempt must be graded for this concept."
+                )
+        previous_id = str(body.previous_session_id) if body.previous_session_id else None
+        if previous_id:
+            previous = owned_session(db, owner, previous_id)
+            if db.get(ConceptVersion, previous.concept_version_id).concept_id != version.concept_id:
+                raise ApiError(422, "CONCEPT_MISMATCH", "Previous session must concern the same concept.")
+        session = TeachbackSession(
+            id=uid(),
+            user_id=owner,
+            concept_version_id=version.id,
+            task_id=task_id,
+            attempt_id=attempt_id,
+            previous_session_id=previous_id,
+            explanation_language=body.explanation_language,
+            student_persona=body.student_persona,
+            status="active",
+            question_count=0,
+            started_at=utcnow(),
+        )
+        try:
+            with db.begin_nested():
+                db.add(session)
+                db.flush()
+        except IntegrityError as exc:
+            if (
+                getattr(exc.orig, "args", [None])[0] == 1452
+                or getattr(exc.orig, "sqlite_errorcode", None) == 787
+            ):
+                raise ApiError(
+                    409, "RESOURCE_CHANGED", "Related data changed while creating the session."
+                ) from None
+            raise
+        return 201, {"data": session_dto(db, session)}
+
+    return mutate(request, body, "createTeachbackSession", action)
 
 
-@router.post("/v1/teachback-sessions/{sessionId}/feedback", response_model=FeedbackEnvelope, status_code=201)
-def report_feedback(session_id: Annotated[UUID, Path(alias="sessionId")], body: FeedbackInput, user: CurrentUser,
-    db: DatabaseSession, idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128)]):
-    get_session(db, user.id, session_id)
-    op = f"POST:/v1/teachback-sessions/{session_id}/feedback"; digest = request_hash(body.model_dump(mode="json"))
-    cached = idem(db, user.id, op, idempotency_key, digest)
-    if cached: return cached
-    report = db.scalar(select(SessionReport).where(SessionReport.session_id == session_id))
-    if report is None: raise HTTPException(409, "REPORT_NOT_READY")
-    if body.report_item_id and not any(str(item.get("id")) == str(body.report_item_id) for item in report.items):
-        raise HTTPException(422, "REPORT_ITEM_MISMATCH")
-    feedback = FeedbackReport(owner_id=user.id, session_id=session_id, report_item_id=body.report_item_id,
-        reason=body.reason, comment=body.comment, status="received")
-    db.add(feedback); db.flush()
-    response = {"data": {"id": feedback.id, "session_id": feedback.session_id, "report_item_id": feedback.report_item_id,
-        "reason": feedback.reason, "comment": feedback.comment, "status": feedback.status, "created_at": feedback.created_at}}
-    save_idem(db, user.id, op, idempotency_key, digest, response, 201)
-    db.commit()
-    return response
+@router.get("/teachback-sessions/{sessionId}")
+def get_session_route(session_id: Annotated[UUID, Path(alias="sessionId")], request: Request):
+    ctx, owner = get_context(request), get_user(request)
+    with ctx.db.transaction() as db:
+        return {"data": session_dto(db, owned_session(db, owner, session_id))}
 
 
-@router.post("/v1/teachback-sessions/{sessionId}/final-answer", status_code=201)
-def final_answer(session_id: Annotated[UUID, Path(alias="sessionId")], body: FinalAnswerInput, user: CurrentUser,
-    db: DatabaseSession, idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128)]):
-    session = get_session(db, user.id, session_id)
-    op = f"POST:/v1/teachback-sessions/{session_id}/final-answer"; digest = request_hash(body.model_dump(mode="json"))
-    cached = idem(db, user.id, op, idempotency_key, digest)
-    if cached: return cached
-    if session.status != "active" or session.question_count != 3: raise HTTPException(409, "FINAL_ANSWER_NOT_ALLOWED")
-    if session.latest_job_id:
-        job = db.get(Job, session.latest_job_id)
-        if job and job.status in ("queued", "running", "outcome_unknown"): raise HTTPException(409, "JOB_IN_PROGRESS")
-    last = db.scalar(select(TeachbackMessage).where(TeachbackMessage.session_id == session.id).order_by(TeachbackMessage.sequence_no.desc()).limit(1))
-    if not last or last.role != "assistant": raise HTTPException(409, "FINAL_ANSWER_NOT_ALLOWED")
-    msg = TeachbackMessage(session_id=session.id, role="user", content=body.content, input_mode=body.input_mode, sequence_no=last.sequence_no + 1)
-    db.add(msg); db.flush()
-    response = {"data": message_dto(msg)}
-    save_idem(db, user.id, op, idempotency_key, digest, response, 201)
-    db.commit(); return response
+@router.patch("/teachback-sessions/{sessionId}")
+def abandon_session(
+    session_id: Annotated[UUID, Path(alias="sessionId")], body: TeachbackSessionPatch, request: Request
+):
+    ctx, owner = get_context(request), get_user(request)
+    with ctx.db.transaction() as db:
+        session = owned_session(db, owner, session_id, lock=True)
+        if session.status != "active":
+            raise ApiError(409, "SESSION_NOT_ACTIVE", "Session is not active.")
+        no_busy_job(db, session)
+        session.status = body.status
+        db.flush()
+        return {"data": session_dto(db, session)}
+
+
+@router.get("/teachback-sessions/{sessionId}/messages")
+def list_messages(
+    session_id: Annotated[UUID, Path(alias="sessionId")],
+    request: Request,
+    cursor: Annotated[str | None, Query(max_length=1024)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+):
+    ctx, owner = get_context(request), get_user(request)
+    filters = {"owner": owner, "operation": "listTeachbackMessages", "session_id": str(session_id)}
+    with ctx.db.transaction() as db:
+        owned_session(db, owner, session_id)
+        stmt = select(SessionMessage).where(SessionMessage.session_id == str(session_id))
+        if cursor:
+            payload = decode_opaque_cursor(cursor, filters, secret=ctx.settings.signing_secret)
+            if (
+                not isinstance(payload, dict)
+                or set(payload) != {"sequence_no"}
+                or type(payload["sequence_no"]) is not int
+                or payload["sequence_no"] < 1
+            ):
+                raise ApiError(422, "VALIDATION_ERROR", "Invalid message cursor.")
+            stmt = stmt.where(SessionMessage.sequence_no > payload["sequence_no"])
+        rows = list(db.scalars(stmt.order_by(SessionMessage.sequence_no).limit(limit + 1)))
+        more, rows = len(rows) > limit, rows[:limit]
+        next_cursor = (
+            encode_opaque_cursor(
+                {"sequence_no": rows[-1].sequence_no}, filters, secret=ctx.settings.signing_secret
+            )
+            if more and rows
+            else None
+        )
+        return {"data": [message_dto(m) for m in rows], "next_cursor": next_cursor}
+
+
+@router.post("/teachback-sessions/{sessionId}/messages", status_code=202)
+def send_message(session_id: Annotated[UUID, Path(alias="sessionId")], body: MessageInput, request: Request):
+    ctx, owner = get_context(request), get_user(request)
+    key = check_key(request.headers.get("X-AI-Key"))
+    if key in body.content:
+        raise ApiError(422, "INVALID_REQUEST", "Credentials cannot be included in conversation text.")
+
+    def action(db):
+        session = owned_session(db, owner, session_id, lock=True)
+        if session.status != "active":
+            raise ApiError(409, "SESSION_NOT_ACTIVE", "Session is not active.")
+        if session.question_count >= 3:
+            raise ApiError(
+                422, "QUESTION_LIMIT_REACHED", "Use final-answer or complete after three questions."
+            )
+        no_busy_job(db, session)
+        last = last_message(db, session.id)
+        message = SessionMessage(
+            id=uid(),
+            session_id=session.id,
+            role="user",
+            content=body.content,
+            input_mode=body.input_mode,
+            sequence_no=last.sequence_no + 1 if last else 1,
+            created_at=utcnow(),
+        )
+        db.add(message)
+        db.flush()
+        job = ctx.jobs.enqueue(
+            db,
+            user_id=owner,
+            kind="message",
+            resource_type="session",
+            resource_id=session.id,
+            payload={"session_id": session.id, "message_id": message.id},
+            model_id=body.model_id,
+            ai_key=key,
+        )
+        message.job_id, session.latest_job_id = job.id, job.id
+        db.flush()
+        return 202, accepted(job)
+
+    return mutate(request, body, "sendTeachbackMessage", action)
+
+
+@router.post("/teachback-sessions/{sessionId}/complete", status_code=202)
+def complete_session(
+    session_id: Annotated[UUID, Path(alias="sessionId")], body: CompleteSessionInput, request: Request
+):
+    ctx, owner = get_context(request), get_user(request)
+    key = check_key(request.headers.get("X-AI-Key"))
+
+    def action(db):
+        session = owned_session(db, owner, session_id, lock=True)
+        if session.status == "report_pending":
+            job = latest_job(db, session)
+            if job and job.kind == "report":
+                return 202, accepted(job)
+        if session.status != "active":
+            raise ApiError(409, "SESSION_NOT_ACTIVE", "Session is not active.")
+        no_busy_job(db, session)
+        if not db.scalar(
+            select(SessionMessage.id)
+            .where(SessionMessage.session_id == session.id, SessionMessage.role == "user")
+            .limit(1)
+        ):
+            raise ApiError(422, "MESSAGE_REQUIRED", "Explain the concept before completing.")
+        job = ctx.jobs.enqueue(
+            db,
+            user_id=owner,
+            kind="report",
+            resource_type="session",
+            resource_id=session.id,
+            payload={"session_id": session.id},
+            model_id=body.model_id,
+            ai_key=key,
+        )
+        session.latest_job_id, session.status = job.id, "report_pending"
+        db.flush()
+        return 202, accepted(job)
+
+    return mutate(request, body, "completeTeachbackSession", action)
+
+
+def report_dto(db, report):
+    version = db.get(ConceptVersion, report.concept_version_id)
+    rows = db.scalars(
+        select(ReportItem)
+        .join(ConceptChecklistItem, ConceptChecklistItem.id == ReportItem.checklist_item_id)
+        .where(ReportItem.report_id == report.id)
+        .order_by(ConceptChecklistItem.ordinal)
+    ).all()
+    items = []
+    for item in rows:
+        pins = db.execute(
+            select(ReportEvidence, ConceptVersionEvidence)
+            .join(
+                ConceptVersionEvidence,
+                (ConceptVersionEvidence.chunk_id == ReportEvidence.chunk_id)
+                & (ConceptVersionEvidence.concept_version_id == version.id),
+            )
+            .where(ReportEvidence.report_item_id == item.id)
+            .order_by(ReportEvidence.chunk_id)
+        ).all()
+        items.append(
+            {
+                "id": item.id,
+                "concept_id": version.concept_id,
+                "concept_version_id": version.id,
+                "checklist_item_id": item.checklist_item_id,
+                "status": item.status,
+                "description": item.description,
+                "confidence": item.confidence,
+                "evidence": [evidence_dto(db, pin.chunk_id, pin.quote) for _, pin in pins],
+            }
+        )
+    action_id = db.scalar(select(ImprovementAction.id).where(ImprovementAction.report_id == report.id))
+    return {
+        "id": report.id,
+        "session_id": report.session_id,
+        "concept_version_id": version.id,
+        "version_no": version.version_no,
+        "coverage": float(report.coverage) if report.coverage is not None else None,
+        "coverage_formula": report.coverage_formula,
+        "assessable_count": report.assessable_count,
+        "weighted_score": float(report.weighted_score),
+        "items": items,
+        "next_action": report.next_action,
+        "action_id": action_id,
+    }
+
+
+@router.get("/teachback-sessions/{sessionId}/report")
+def get_report(session_id: Annotated[UUID, Path(alias="sessionId")], request: Request):
+    ctx, owner = get_context(request), get_user(request)
+    with ctx.db.transaction() as db:
+        owned_session(db, owner, session_id)
+        report = db.scalar(select(SessionReport).where(SessionReport.session_id == str(session_id)))
+        if report is None:
+            raise ApiError(409, "REPORT_NOT_READY", "Report is not ready.")
+        return {"data": report_dto(db, report)}
+
+
+@router.post("/teachback-sessions/{sessionId}/feedback", status_code=201)
+def report_feedback(
+    session_id: Annotated[UUID, Path(alias="sessionId")], body: FeedbackInput, request: Request
+):
+    owner = get_user(request)
+
+    def action(db):
+        session = owned_session(db, owner, session_id)
+        report = db.scalar(select(SessionReport).where(SessionReport.session_id == session.id))
+        if report is None:
+            raise ApiError(409, "REPORT_NOT_READY", "Report is not ready.")
+        item_id = str(body.report_item_id) if body.report_item_id else None
+        if item_id and not db.scalar(
+            select(ReportItem.id).where(ReportItem.id == item_id, ReportItem.report_id == report.id)
+        ):
+            raise ApiError(422, "REPORT_ITEM_MISMATCH", "Item must belong to this report.")
+        feedback = FeedbackReport(
+            id=uid(),
+            user_id=owner,
+            session_id=session.id,
+            report_id=report.id,
+            report_item_id=item_id,
+            reason=body.reason,
+            comment=body.comment,
+            status="received",
+            created_at=utcnow(),
+        )
+        db.add(feedback)
+        db.flush()
+        return 201, {
+            "data": {
+                "id": feedback.id,
+                "session_id": session.id,
+                "report_item_id": item_id,
+                "reason": feedback.reason,
+                "comment": feedback.comment,
+                "status": feedback.status,
+                "created_at": iso(feedback.created_at),
+            }
+        }
+
+    return mutate(request, body, "reportIncorrectFeedback", action)
+
+
+@router.post("/teachback-sessions/{sessionId}/final-answer", status_code=201)
+def final_answer(
+    session_id: Annotated[UUID, Path(alias="sessionId")], body: FinalAnswerInput, request: Request
+):
+    owner = get_user(request)
+
+    def action(db):
+        session = owned_session(db, owner, session_id, lock=True)
+        if session.status != "active" or session.question_count != 3:
+            raise ApiError(
+                409, "FINAL_ANSWER_NOT_ALLOWED", "Final answer requires three completed questions."
+            )
+        no_busy_job(db, session)
+        last = last_message(db, session.id)
+        if not last or last.role != "assistant":
+            raise ApiError(409, "FINAL_ANSWER_NOT_ALLOWED", "Final answer was already submitted.")
+        message = SessionMessage(
+            id=uid(),
+            session_id=session.id,
+            role="user",
+            content=body.content,
+            input_mode=body.input_mode,
+            sequence_no=last.sequence_no + 1,
+            created_at=utcnow(),
+        )
+        db.add(message)
+        db.flush()
+        return 201, {"data": message_dto(message)}
+
+    return mutate(request, body, "submitFinalTeachbackAnswer", action)
