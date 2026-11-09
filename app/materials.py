@@ -157,10 +157,17 @@ def get_confirmed_version(s, user_id, concept_version_id, require_current=False)
     return v
 
 
-def extract(m, data):
+def extract(m, data, *, require_text=True):
     if len(data) != m.size_bytes:
         err(422, "INVALID_UPLOAD", "Upload size does not match.")
-    return extract_bytes(m.mime_type, data)
+    if require_text:
+        return extract_bytes(m.mime_type, data)
+    return extract_bytes(m.mime_type, data, require_text=False)
+
+
+def ai_recognizes(ctx, mime_type):
+    ai_documents = getattr(ctx, "ai_documents", None)
+    return ai_documents is not None and ai_documents.handles(mime_type)
 
 
 @dataclass(frozen=True)
@@ -317,9 +324,16 @@ def complete(
     # Parsing is bounded by extraction.py and never holds a DB connection. The
     # immutable object key is checked again with all other mutable state below.
     source_data = ctx.storage.read(snapshot.storage_key)
-    pages = extract(snapshot, source_data)
+    # With the AI server configured, a scanned PDF (no text layer) is accepted:
+    # Upstage OCR supplies the text in the analysis job.
+    pages = extract(snapshot, source_data, require_text=not ai_recognizes(ctx, snapshot.mime_type))
     preflight = getattr(ctx.providers, "preflight", None)
-    if snapshot.mime_type.startswith("image/") and callable(preflight):
+    # Vision limits apply only when the image itself goes to the LLM provider.
+    if (
+        snapshot.mime_type.startswith("image/")
+        and callable(preflight)
+        and not ai_recognizes(ctx, snapshot.mime_type)
+    ):
         from .providers import ProviderFailure
 
         try:
@@ -637,10 +651,10 @@ def remove(materialId: str, request: Request):
     return Response(status_code=204)
 
 
-def analysis_chunks(m, data, job_id):
+def analysis_chunks(m, data, job_id, pages=None):
     import uuid
 
-    pages = extract(m, data)
+    pages = extract(m, data) if pages is None else pages
     chunks = []
     for page, text in enumerate(pages, 1):
         for start in range(0, len(text), 4000):
@@ -689,6 +703,16 @@ class AnalysisHandler:
         m = snapshot
         data = self.ctx.storage.read(m.storage_key)
         instructions = "Return exactly {units:[{title,concepts:[{name,summary,checklist_items:[string],evidence:[{chunk_id,quote}]}]}]}. Cite only supplied chunk IDs; each quote must be an exact nonempty substring of that chunk."
+        if ai_recognizes(self.ctx, m.mime_type):
+            # Local validation still runs first (format/limits); recognition text
+            # then comes from the AI server, so images become plain text chunks.
+            extract(m, data, require_text=False)
+            pages = self.ctx.ai_documents.extract_pages(m.mime_type, data, material_id=m.id)
+            payload = {
+                "instructions": instructions,
+                "chunks": analysis_chunks(m, data, m.latest_job_id, pages),
+            }
+            return PreparedAnalysis(m, m.latest_job_id, payload)
         if m.mime_type.startswith("image/"):
             import uuid
 
