@@ -64,7 +64,8 @@ class JWTAuthenticator:
                 return None
             try:
                 mailbox = Address(addr_spec=value)
-            except (HeaderParseError, ValueError):
+            except (HeaderParseError, ValueError, IndexError):
+                # Some CPython 3.12 patch releases raise IndexError for "user@".
                 return None
             # Validate syntax only; identity comes from issuer/subject, and
             # provisioning must never perform address or domain lookups.
