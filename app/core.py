@@ -35,6 +35,9 @@ class Settings:
     auth_issuer: str = ""
     auth_audience: str = ""
     enabled_models: tuple = ()
+    # Optional internal AI server (repo AI). Empty keeps local extraction.
+    ai_service_url: str = ""
+    ai_service_api_key: str = ""
 
     @classmethod
     def from_env(cls):

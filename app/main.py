@@ -18,11 +18,13 @@ from .db import Database
 from .a_gateway import CanonicalTaskGateway
 
 
-def build_context(settings=None, *, auth=None, providers=None, task_gateway=None, create_schema=False):
+def build_context(
+    settings=None, *, auth=None, providers=None, task_gateway=None, ai_documents=None, create_schema=False
+):
     settings = settings or Settings.from_env()
     if settings.profile not in {"production", "development", "test"}:
         raise ValueError("Unknown application profile")
-    if (auth is not None or providers is not None) and settings.profile != "test":
+    if (auth is not None or providers is not None or ai_documents is not None) and settings.profile != "test":
         raise ValueError("Authentication/provider substitutes are allowed only in test profile")
     if create_schema and settings.profile == "production":
         raise ValueError("Production schema changes require reviewed migrations")
@@ -46,6 +48,9 @@ def build_context(settings=None, *, auth=None, providers=None, task_gateway=None
     context.auth = auth or JWTAuthenticator(settings, db)
     context.storage = LocalStorage(settings)
     context.providers = providers or ProviderRegistry(settings)
+    from .ai_service import AiDocumentClient
+
+    context.ai_documents = ai_documents or AiDocumentClient.from_settings(settings)
     context.credentials = Credentials(
         Path(settings.storage_root) / ".credentials.sqlite3", settings.credential_encryption_key
     )
@@ -63,9 +68,16 @@ def build_context(settings=None, *, auth=None, providers=None, task_gateway=None
     return context
 
 
-def create_app(settings=None, *, auth=None, providers=None, task_gateway=None, create_schema=False):
+def create_app(
+    settings=None, *, auth=None, providers=None, task_gateway=None, ai_documents=None, create_schema=False
+):
     context = build_context(
-        settings, auth=auth, providers=providers, task_gateway=task_gateway, create_schema=create_schema
+        settings,
+        auth=auth,
+        providers=providers,
+        task_gateway=task_gateway,
+        ai_documents=ai_documents,
+        create_schema=create_schema,
     )
     app = FastAPI(title="Team4 Learning Backend", version="1.3.0", debug=False)
     app.state.context = context
