@@ -62,7 +62,9 @@ def _windows_monitor(process, finished):
             pass
 
 
-def extract_bytes(mime, data):
+def extract_bytes(mime, data, *, require_text=True):
+    """Validate and parse locally. require_text=False accepts a PDF without a
+    text layer (scanned) when an external recognizer will supply the text."""
     if not isinstance(data, bytes) or not 0 < len(data) <= MAX_SOURCE_BYTES:
         raise ApiError(422, "INVALID_UPLOAD", "Upload size is invalid.")
     if mime not in ("text/plain", "application/pdf", "image/png", "image/jpeg"):
@@ -78,7 +80,8 @@ def extract_bytes(mime, data):
             if k.upper() in ("SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "PATH", "TEMP", "TMP", "LANG", "LC_ALL")
         }
         proc = subprocess.Popen(
-            [sys.executable, "-m", "app.extraction", "--child", mime],
+            [sys.executable, "-m", "app.extraction", "--child", mime]
+            + ([] if require_text else ["--allow-empty"]),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -116,7 +119,7 @@ def extract_bytes(mime, data):
         _SLOTS.release()
 
 
-def _parse(mime, data):
+def _parse(mime, data, require_text=True):
     if os.name != "nt":
         import resource
 
@@ -169,7 +172,9 @@ def _parse(mime, data):
         return [None]
     else:
         raise ValueError()
-    if sum(len(x.encode("utf-8")) for x in pages) > MAX_TEXT_BYTES or not any(x.strip() for x in pages):
+    if sum(len(x.encode("utf-8")) for x in pages) > MAX_TEXT_BYTES or (
+        require_text and not any(x.strip() for x in pages)
+    ):
         raise ValueError()
     return pages
 
@@ -177,11 +182,11 @@ def _parse(mime, data):
 def _child():
     try:
         data = sys.stdin.buffer.read(MAX_SOURCE_BYTES + 1)
-        pages = _parse(sys.argv[2], data)
+        pages = _parse(sys.argv[2], data, require_text=sys.argv[3:] != ["--allow-empty"])
         sys.stdout.buffer.write(json.dumps(pages, ensure_ascii=True).encode("ascii"))
     except Exception:
         sys.exit(1)
 
 
-if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "--child":
+if __name__ == "__main__" and len(sys.argv) in (3, 4) and sys.argv[1] == "--child":
     _child()

@@ -50,6 +50,7 @@ foreach ($migrationFile in $migrationFiles) {
 | `CREDENTIAL_ENCRYPTION_KEY` | 외부에서 공급한 base64 인코딩 32바이트 AES 키 |
 | `AUTH_PUBLIC_KEY`, `AUTH_ISSUER`, `AUTH_AUDIENCE` | 외부 인증 제공자의 RS256 공개키 PEM·issuer·audience |
 | `ENABLED_MODELS` | 승인한 `openai:<model>` / `anthropic:<model>` ID의 쉼표 구분 목록; 비어 있으면 활성 모델 없음 |
+| `AI_SERVICE_URL`, `AI_SERVICE_API_KEY` | 선택. AI 서버(`AI` repo) 주소와 서버 간 키(AI 서버의 `AI_SERVER_API_KEY`). 설정하면 PDF/PNG/JPEG 인식을 AI 서버의 Upstage 문서 인식으로 처리하고, 비우면 기존 로컬 추출을 사용합니다. 자세한 내용은 [팀 repo 통합 안내](docs/INTEGRATION_REPOS.md) |
 
 필수 설정과 DB를 준비한 후 같은 환경을 사용하는 두 터미널에서 실행합니다.
 
