@@ -261,7 +261,12 @@ async def put_file(materialId: str, request: Request, token: str):
     content = bytes(data)
     if len(content) != size_bytes:
         err(422, "INVALID_UPLOAD", "Upload size does not match.")
-    await run_in_threadpool(extract_bytes, mime_type, content)
+    # Match complete(): an enabled recognizer supplies text for scanned PDFs.
+    # Keep the ordinary parser call unchanged for non-OCR deployments/types.
+    if ai_recognizes(ctx, mime_type):
+        await run_in_threadpool(extract_bytes, mime_type, content, require_text=False)
+    else:
+        await run_in_threadpool(extract_bytes, mime_type, content)
 
     def commit():
         # Stage and fsync without a DB connection, then re-check under a short
