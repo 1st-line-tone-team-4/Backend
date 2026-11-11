@@ -27,23 +27,29 @@ MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 50
 
 
+def validate_service_config(base_url, api_key, *, transport=None, profile=None):
+    """Shared AI_SERVICE_URL/API key rules for every AI server client."""
+    parts = urlsplit(base_url or "")
+    if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment:
+        raise ValueError("AI_SERVICE_URL must be an absolute http(s) URL without query or fragment")
+    if (
+        parts.scheme == "http"
+        and parts.hostname not in ("127.0.0.1", "localhost", "::1")
+        and profile == "production"
+    ):
+        raise ValueError("Production AI_SERVICE_URL must use https unless it is loopback")
+    if not api_key:
+        raise ValueError("AI_SERVICE_API_KEY is required when AI_SERVICE_URL is set")
+    if transport is not None and profile != "test":
+        raise ValueError("Custom AI service transports are test-only")
+    return base_url.rstrip("/")
+
+
 class AiDocumentClient:
     def __init__(
         self, base_url, api_key, *, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, transport=None, profile=None
     ):
-        parts = urlsplit(base_url or "")
-        if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment:
-            raise ValueError("AI_SERVICE_URL must be an absolute http(s) URL without query or fragment")
-        if (
-            parts.scheme == "http"
-            and parts.hostname not in ("127.0.0.1", "localhost", "::1")
-            and profile == "production"
-        ):
-            raise ValueError("Production AI_SERVICE_URL must use https unless it is loopback")
-        if not api_key:
-            raise ValueError("AI_SERVICE_API_KEY is required when AI_SERVICE_URL is set")
-        if transport is not None and profile != "test":
-            raise ValueError("Custom AI service transports are test-only")
+        validate_service_config(base_url, api_key, transport=transport, profile=profile)
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds

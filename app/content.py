@@ -30,6 +30,7 @@ from .models import (
 from .materials import get_confirmed_version, evidence_dto, version_dto
 from .jobs import accepted
 from .projections import question_dto, question_dtos
+from .ai_context import study_context, wants_ai_context
 
 router = APIRouter()
 
@@ -486,7 +487,7 @@ class QuestionsHandler:
             raise ValueError("stale job")
         s = session.get(QuestionSet, job.resource_id)
         links = session.scalars(select(QuestionSetConcept).where(QuestionSetConcept.set_id == s.id)).all()
-        return {
+        payload = {
             "instructions": (
                 'Return one JSON object, without a Markdown fence, with exactly the key "questions". '
                 "Its value must contain exactly count questions in the desired order. Each question is an "
@@ -510,6 +511,12 @@ class QuestionsHandler:
                 _generation_version(session, session.get(ConceptVersion, x.concept_version_id)) for x in links
             ],
         }
+        if wants_ai_context(self.ctx, job.model_id):
+            payload["ai_context"] = {
+                "unit_id": s.unit_id,
+                "context": study_context(session, [x.concept_version_id for x in links]),
+            }
+        return payload
 
     def persist(self, session, job, output):
         if not self.is_current(session, job):
@@ -671,7 +678,7 @@ class ExplanationHandler:
         if not self.is_current(session, job):
             raise ValueError("stale job")
         e = session.get(LearningExplanation, job.resource_id)
-        return {
+        payload = {
             "instructions": (
                 "Return one JSON object without a Markdown fence, with exactly these keys: title, "
                 "explanation_markdown, evidence. title is a nonempty string of at most 200 characters; "
@@ -686,6 +693,9 @@ class ExplanationHandler:
             "language": e.explanation_language,
             "version": _generation_version(session, session.get(ConceptVersion, e.concept_version_id)),
         }
+        if wants_ai_context(self.ctx, job.model_id):
+            payload["ai_context"] = {"context": study_context(session, [e.concept_version_id])}
+        return payload
 
     def persist(self, session, job, output):
         if not self.is_current(session, job):

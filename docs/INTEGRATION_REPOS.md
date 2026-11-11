@@ -54,7 +54,37 @@ AI 서버는 자체 캐시와 `409 DOCUMENT_PROCESSING_STATE`로 중복 과금�
 2. 미구현 공개 계약 13개(publications·score-claims·billing)와 프로필 수정·비밀번호·탈퇴·알림 설정 API가 없습니다. 해당 화면은 미지원 안내를 표시합니다.
 3. 실제 마이크·STT·TTS, 운영 배포(프록시/CORS), 실제 AI 품질·비용은 검증하지 않았습니다.
 
+## AI 서버 연동 2단계: 생성·채점·평가 (2026-11-12)
+
+AI repo의 내부 명세 `ai-internal-api.yaml`(0.3.0, Gemini)을 기준으로, `AI_SERVICE_MODELS`에 넣은 `gemini:<model>`로 요청한 AI 작업을 AI 서버가 처리합니다. 공개 API 계약은 그대로이고, 기존 OpenAI/Anthropic 모델(`ENABLED_MODELS`)의 동작도 바뀌지 않습니다. 구현은 `app/ai_generation.py`(요청·응답 변환, 오류 매핑)와 `app/ai_context.py`(DB → `StudyContext`)입니다.
+
+| Job 종류 | AI 서버 경로 | 변환 |
+| --- | --- | --- |
+| `analysis` | `POST /internal/materials/analyze` | 청크에 자료 ID·이름을 붙여 보내고, `DraftAnalysis`의 근거를 `{chunk_id, quote}`로 바꿉니다. 원문과 글자 그대로 일치하지 않는 근거는 공백·대소문자 차이만 원문 기준으로 복원하고, 그래도 없으면 그 개념을 저장하지 않습니다. |
+| `questions` | `POST /internal/questions/generate` | 확정 버전과 근거 원문(`StudyContext`)을 보냅니다. AI 서버는 5~20문항만 받으므로 1~4문항 요청은 5문항을 생성해 앞에서부터 사용합니다. |
+| `learning_explanation` | `POST /internal/explanations/generate` | `[근거: id]` 인용의 청크 ID를 백엔드 ID로 되돌리고, 근거가 남지 않은 인용은 지웁니다. |
+| `grade` | `POST /internal/questions/grade` | 저장된 정답 키를 그대로 보내고, 결과의 `correct_answer`는 백엔드의 정답 키를 사용합니다. 객관식·정확 일치는 AI 호출 없이 채점됩니다. |
+| `report` | `POST /internal/evaluations/generate` | 세션에 고정된 근거 발췌만 원문으로 보냅니다. 근거가 남지 않은 `explained/partial/error`는 AI 서버 규칙과 같이 `unverified`로 바꾸고, 설명 1200자·다음 행동 2000자로 자릅니다. 점수는 기존처럼 백엔드가 다시 계산합니다. |
+| `message` | (AI 서버에 텍스트 질문 경로 없음) | AI 서버는 Teach-back을 음성 전용으로 바꿨기 때문에, 텍스트 Teach-back 질문은 같은 BYOK 키로 Gemini `generateContent`를 직접 호출하는 임시 경로입니다. AI 서버에 텍스트 응답 경로가 생기면 옮겨야 합니다. |
+
+- AI 서버는 UUID v4만 받는데 백엔드 청크 ID는 분석 Job에서 파생한 UUID v5입니다. 요청마다 v4 형태로 바꿔 보내고 응답에서 원래 ID로 되돌립니다. DB에 저장되는 ID는 바뀌지 않습니다.
+- 인증: `X-AI-API-Key`(서버 간 키)와 사용자의 `X-AI-Key`(BYOK)를 함께 보냅니다. 공개 계약대로 사용자는 계속 키를 입력해야 합니다.
+- 자동 재시도는 없습니다. 연결 실패는 `PROVIDER_UNAVAILABLE`(재시도 가능), 429는 `PROVIDER_RATE_LIMIT`, AI 서버의 `PROVIDER_AUTH`는 `PROVIDER_AUTH`, `INVALID_OUTPUT`은 `INVALID_OUTPUT`, 공급자 5xx·504·응답 시간 초과는 과금 여부를 알 수 없어 `outcome_unknown`(`TIMEOUT_UNKNOWN`)입니다. 요청 본문은 AI 서버 한도(2 MiB)를 넘으면 보내기 전에 실패합니다.
+- 분석은 최대 12회 분할 호출(`max_calls`)로 보냅니다. 큰 자료는 AI 서버가 422로 거절할 수 있습니다. 생성 요청 하나의 대기 한도는 290초입니다.
+
+### 검증
+
+- `tests/test_ai_generation.py`: 서명 JWT → HTTP → DB → worker 전체 여정(`test_ab_e2e`와 같은 흐름)을 이 어댑터와 AI 서버 응답 형식의 가짜 서버로 실행해 모든 결과가 저장되는지 확인하고, 오류 매핑·ID 변환·근거 복원·문항 수·크기 제한·키 검증을 따로 확인합니다.
+- 교차 검증(11/12, 저장소에는 넣지 않은 일회성 스크립트): 실제 AI repo(`d1e29b2`) 서버를 띄우고 Gemini SDK만 막은 상태에서, 위 전체 여정이 만든 요청을 모두 실제 AI 서버로 보냈습니다. 분석·문제·설명·리포트와 의미 채점 요청은 모두 AI 서버의 입력 검증을 통과해 공급자 호출 단계까지 갔고(422 없음), 정확 일치 채점은 실제 200 응답을 변환해 저장 형식과 맞는지 확인했습니다.
+- 실제 Gemini 호출, 응답 품질, 비용은 검증하지 않았습니다.
+
+### 남은 결정
+
+1. 텍스트 Teach-back 질문을 AI 서버에서 제공할지(현재 백엔드의 임시 직접 호출), 음성 Teach-back(AI 서버 WebSocket)을 공개 API에 어떻게 노출할지.
+2. 학습 계획 생성(`/internal/study-plan/generate`), 혼합 난이도, 상세 평가는 공개 계약에 없어 연결하지 않았습니다.
+3. 서버 키 사용(`AI_USE_SERVER_TEXT_KEY`)으로 사용자 키 없이 운영할지는 구독 정책과 함께 정해야 합니다. 지금은 BYOK 계약을 유지합니다.
+
 ## 다음 통합 후보
 
-1. 문제 생성·채점·Teach-back·평가: 백엔드(OpenAI/Anthropic BYOK)와 AI repo(현재 Gemini)가 같은 기능을 따로 구현하고 있습니다. AI repo는 11/12에 백엔드 연동용 내부 명세 `ai-internal-api.yaml`을 추가했습니다.
+1. 로그인(인증 제공자) 결정과 연결.
 2. AI repo 테스트 일부는 저장소에 없는 `swagger-api-final.yaml`을 읽으며 파일이 없으면 skip합니다. 계약 원본은 Backend `contracts/openapi-1.3.0.json`입니다.

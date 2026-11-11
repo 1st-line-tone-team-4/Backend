@@ -5,6 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy import select
 
 from app.a_gateway import lock_owned_task, update_teachback_progress
+from app.ai_context import pinned_study_context, wants_ai_context
 from app.core import ApiError, uid, utcnow
 from app.materials import get_confirmed_version
 from app.models import (
@@ -105,9 +106,12 @@ class TeachbackHandler:
     def prepare(self, db, job):
         session, _ = self.lock_resource(db, job)
         version = get_confirmed_version(db, job.user_id, session.concept_version_id)
-        return (prepare_message_prompt if self.kind == "message" else prepare_report_prompt)(
+        payload = (prepare_message_prompt if self.kind == "message" else prepare_report_prompt)(
             db, session, version
         )
+        if self.kind == "report" and wants_ai_context(self.ctx, job.model_id):
+            payload["ai_context"] = {"context": pinned_study_context(db, version, payload["source_evidence"])}
+        return payload
 
     def persist(self, db, job, output):
         session, _ = self.lock_resource(db, job)
