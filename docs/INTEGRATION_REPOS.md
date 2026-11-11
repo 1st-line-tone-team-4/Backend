@@ -38,8 +38,22 @@ AI 서버는 자체 캐시와 `409 DOCUMENT_PROCESSING_STATE`로 중복 과금�
 - 인식은 worker 준비 단계(`prepare_seconds=60`)에서 실행되고 client 타임아웃은 50초입니다. AI 서버의 Upstage 타임아웃 기본값은 120초라서, 큰 PDF는 타임아웃으로 `outcome_unknown`이 될 수 있습니다. 대용량 자료는 Job 구조 조정이 필요합니다.
 - 로컬 120,000바이트 텍스트 상한은 그대로 적용됩니다.
 
+## 프런트엔드 연동 (2026-11-10 작업, 2026-11-12 검증)
+
+브랜치 `integration/latest-ui-20261110`(Backend·frontend 동일 이름)은 frontend `main` 5de8d3d(11/9, 음성 채팅·학습 화면 추가)를 이 백엔드에 실제로 연결한 결과입니다. 11/10 로컬 작업을 11/12에 다시 검증해 push했습니다.
+
+- frontend 39개 API wrapper의 경로·메서드는 구현과 모두 일치했습니다. 연결 작업은 `model_id`·`X-AI-Key` 전달, `voice_transcript` 입력 모드, Job polling 2초·`Retry-After` 준수, POST 멱등키 유지, 세션 전환 시 캐시·요청 격리, 업로드 결과 불명 복구, 실제 문제·결과·근거·리포트 화면 연결입니다. 공개 계약은 바꾸지 않았습니다.
+- 백엔드 변경: 서명 업로드 PUT이 AI 문서 인식이 설정된 경우 텍스트 없는 PDF를 complete 단계와 같은 기준으로 받도록 맞춤(07779a6), AI 인식 이미지의 분석 결과 저장 오류 수정, 선택적 `CORS_ALLOWED_ORIGINS`.
+- 검증(11/12, Windows): Backend 전체 테스트 통과(MySQL 테스트 1개는 disposable DB가 없어 skip), frontend 단위 테스트 47개·build 통과, 실제 화면 E2E(`npm run test:browser`) 통과. E2E는 실제 백엔드·JWT 검증·임시 SQLite와 결정적 합성 AI provider를 사용하며 외부 AI·실제 인증 제공자는 호출하지 않습니다.
+- 실행: frontend `npm run dev`는 `/v1`을 `BACKEND_PROXY_TARGET`(기본 `http://127.0.0.1:8000`)으로 프록시합니다. 백엔드는 README의 `uvicorn`과 `python -m app.worker`를 함께 실행합니다.
+
+### 남은 결정과 한계
+
+1. **로그인**: 서버는 외부 RS256 JWT만 검증하고 로그인·토큰 발급 API가 없습니다. frontend는 실제 로그인 대신 개발용 테스트 토큰 입력(`VITE_ENABLE_TEST_LOGIN=true`, 개발 빌드 전용)만 제공합니다. 인증 제공자 선택이 데모 전 필수입니다.
+2. 미구현 공개 계약 13개(publications·score-claims·billing)와 프로필 수정·비밀번호·탈퇴·알림 설정 API가 없습니다. 해당 화면은 미지원 안내를 표시합니다.
+3. 실제 마이크·STT·TTS, 운영 배포(프록시/CORS), 실제 AI 품질·비용은 검증하지 않았습니다.
+
 ## 다음 통합 후보
 
-1. 문제 생성·채점·Teach-back·평가: 백엔드(OpenAI/Anthropic BYOK)와 AI repo(Groq/Gemini)가 같은 기능을 따로 구현하고 있어 어느 쪽을 쓸지 결정이 필요합니다.
-2. frontend: 모든 화면이 `src/data/mock.js`를 사용합니다. `.env.example`의 기본 주소는 `http://localhost:8080/v1`인데 백엔드 실행 예시는 8000 포트입니다. 오류 형식(`error.code`, `error.message`)은 이미 일치합니다.
-3. AI repo 테스트 3개는 저장소에 없는 `swagger-api-final.yaml`을 읽어 실패합니다. 계약 원본은 Backend `contracts/openapi-1.3.0.json`입니다.
+1. 문제 생성·채점·Teach-back·평가: 백엔드(OpenAI/Anthropic BYOK)와 AI repo(현재 Gemini)가 같은 기능을 따로 구현하고 있습니다. AI repo는 11/12에 백엔드 연동용 내부 명세 `ai-internal-api.yaml`을 추가했습니다.
+2. AI repo 테스트 일부는 저장소에 없는 `swagger-api-final.yaml`을 읽으며 파일이 없으면 skip합니다. 계약 원본은 Backend `contracts/openapi-1.3.0.json`입니다.

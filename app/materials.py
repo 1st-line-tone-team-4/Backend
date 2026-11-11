@@ -754,7 +754,9 @@ class AnalysisHandler:
 
     def persist_prepared(self, s, job, output, prepared):
         m = self._revalidate_prepared(s, job, prepared)
-        if m.mime_type.startswith("image/"):
+        # AI-server recognition already turned an image into text chunks; only the
+        # vision path (no "chunks" in the prepared payload) returns source_text.
+        if m.mime_type.startswith("image/") and "chunks" not in prepared.payload:
             source = output.get("source_text") if isinstance(output, dict) else None
             if not isinstance(source, str) or not source.strip() or len(source) > 100000:
                 err(422, "INVALID_OUTPUT", "Image transcription is invalid.")

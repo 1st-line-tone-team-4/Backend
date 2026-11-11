@@ -68,6 +68,30 @@ def build_context(
     return context
 
 
+def cors_origins(settings):
+    """Exact browser origins (scheme://host[:port]) allowed cross-origin access."""
+    from urllib.parse import urlsplit
+
+    origins = tuple(getattr(settings, "cors_allowed_origins", ()) or ())
+    for origin in origins:
+        parts = urlsplit(origin)
+        if (
+            origin == "*"
+            or parts.scheme not in ("http", "https")
+            or not parts.hostname
+            or parts.username
+            or parts.password
+            or parts.path
+            or parts.query
+            or parts.fragment
+            or origin != f"{parts.scheme}://{parts.netloc}"
+        ):
+            raise ValueError("CORS_ALLOWED_ORIGINS entries must be exact http(s) origins")
+        if settings.profile == "production" and parts.scheme != "https":
+            raise ValueError("Production CORS origins must use https")
+    return origins
+
+
 def create_app(
     settings=None, *, auth=None, providers=None, task_gateway=None, ai_documents=None, create_schema=False
 ):
@@ -102,6 +126,22 @@ def create_app(
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response
+
+    origins = cors_origins(context.settings)
+    if origins:
+        from starlette.middleware.cors import CORSMiddleware
+
+        # Added last so it is outermost: preflights never reach auth/HTTPS checks.
+        # Bearer tokens only, so no cookies/credentials mode is needed.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(origins),
+            allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
+            allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-AI-Key"],
+            expose_headers=["X-Request-ID", "Retry-After"],
+            allow_credentials=False,
+            max_age=600,
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, exc):

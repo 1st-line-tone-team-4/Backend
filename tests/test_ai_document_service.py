@@ -211,6 +211,47 @@ def test_analysis_uses_ai_recognition_text_chunks_for_images(image_material):
     json.dumps(payload)
 
 
+def test_ai_recognized_image_persists_recognized_text_chunks(image_material):
+    # Regression: persistence used the vision branch (source_text) for every image,
+    # so AI-recognized images always failed with INVALID_OUTPUT.
+    from sqlalchemy import select
+
+    from app.models import Concept, MaterialChunk
+
+    ctx, mid, jid = image_material
+    ctx.ai_documents = client(
+        lambda request: httpx.Response(200, json=extraction([(1, "Momentum is conserved.")]))
+    )
+    handler = AnalysisHandler(ctx)
+    with ctx.db.transaction() as s:
+        snapshot = handler.prepare_snapshot(s, s.get(Job, jid))
+    prepared = handler.prepare_external(snapshot)
+    chunk = prepared.payload["chunks"][0]
+    output = {
+        "units": [
+            {
+                "title": "Momentum",
+                "concepts": [
+                    {
+                        "name": "Conservation",
+                        "summary": "Momentum is conserved.",
+                        "checklist_items": ["State the conservation rule."],
+                        "evidence": [{"chunk_id": chunk["id"], "quote": "Momentum is conserved"}],
+                    }
+                ],
+            }
+        ]
+    }
+    with ctx.db.transaction() as s:
+        assert handler.persist_prepared(s, s.get(Job, jid), output, prepared) == f"/v1/materials/{mid}"
+    with ctx.db.transaction() as s:
+        chunks = s.scalars(select(MaterialChunk).where(MaterialChunk.material_id == mid)).all()
+        assert [(c.id, c.page_number, c.content) for c in chunks] == [
+            (chunk["id"], 1, "Momentum is conserved.")
+        ]
+        assert s.scalar(select(Concept.id).where(Concept.material_id == mid))
+
+
 def test_without_ai_server_images_still_go_to_vision_provider(image_material):
     ctx, mid, jid = image_material
     ctx.ai_documents = None
