@@ -15,7 +15,7 @@
 | 공유 조회·페이지 | [`app/projections.py`](../app/projections.py): evidence·문제·시도의 응답 변환과 batch loading. [`app/pagination.py`](../app/pagination.py): 기존 세 가지 signed cursor 형식을 유지하는 공통 codec. |
 | A 학습 흐름 | [`routers/`](../src/language_learning_api/routers/): 목표·계획·답안·Teach-back·기록 API. [`services/`](../src/language_learning_api/services/): 채점과 Teach-back의 준비·결과 검증·저장. |
 | A/B 연결 | [`app/a_gateway.py`](../app/a_gateway.py): 실제 계획/task의 소유권·잠금·진도·자료 참조. [`app/ports.py`](../app/ports.py): 주입 가능한 경계이며 미설정 adapter는 task 사용과 위험한 삭제를 허용하지 않습니다. |
-| 작업과 외부 호출 | [`app/jobs.py`](../app/jobs.py): 공통 JobService. [`app/providers.py`](../app/providers.py): 모델 allowlist·요청 제한·provider 응답 검증. [`app/key_validation.py`](../app/key_validation.py): 생성과 수명주기가 다른 키 검증 claim. |
+| 작업과 외부 호출 | [`app/jobs.py`](../app/jobs.py): 공통 JobService. [`app/providers.py`](../app/providers.py): 모델 allowlist·요청 제한·provider 응답 검증. [`app/ai_generation.py`](../app/ai_generation.py): `gemini:*` 모델을 팀 AI 서버 내부 API로 보내고 응답을 기존 handler 출력 형식으로 변환(입력 문맥은 [`app/ai_context.py`](../app/ai_context.py)). [`app/key_validation.py`](../app/key_validation.py): 생성과 수명주기가 다른 키 검증 claim. |
 | 파일·비밀값·실행 | `storage`는 private 파일/서명 URL, `extraction`은 제한된 별도 parser 프로세스, `credentials`는 암호화 TTL vault입니다. [`app/worker.py`](../app/worker.py)가 Job과 [`maintenance`](../app/maintenance.py)의 삭제 outbox를 처리합니다. |
 
 공개 게시·점수 인증 테이블의 존재는 해당 비즈니스 API 구현을 의미하지 않습니다. 실험용 A Alembic 이력은 격리되어 있으며 운영 `create_schema()`와 Alembic 실행은 지원 경로가 아닙니다. DB 변경은 [migration 안내](../migrations/README.md)를 따릅니다.

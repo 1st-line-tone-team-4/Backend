@@ -27,6 +27,7 @@ from .models import (
 )
 
 from .projections import evidence_dto
+from .ai_context import material_name, wants_ai_context
 
 router = APIRouter()
 
@@ -740,7 +741,13 @@ class AnalysisHandler:
         return m
 
     def apply_prepared(self, s, job, prepared):
-        self._revalidate_prepared(s, job, prepared)
+        m = self._revalidate_prepared(s, job, prepared)
+        if "chunks" in prepared.payload and wants_ai_context(self.ctx, job.model_id):
+            # The AI server needs the material identity carried by every SourceChunk.
+            return {
+                **prepared.payload,
+                "ai_context": {"material_id": m.id, "material_name": material_name(m)},
+            }
         return prepared.payload
 
     def prepare(self, s, job):
