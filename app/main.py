@@ -35,7 +35,7 @@ def build_context(
     if settings.profile == "production" and not settings.database_url.startswith("mysql+pymysql://"):
         raise ValueError("Production requires the MySQL database configuration")
     from .storage import LocalStorage
-    from .providers import ProviderRegistry
+    from .ai_generation import build_providers
     from .credentials import Credentials
     from .jobs import JobService
     from .materials import AnalysisHandler
@@ -47,7 +47,7 @@ def build_context(
     context = SimpleNamespace(settings=settings, db=db)
     context.auth = auth or JWTAuthenticator(settings, db)
     context.storage = LocalStorage(settings)
-    context.providers = providers or ProviderRegistry(settings)
+    context.providers = providers or build_providers(settings)
     from .ai_service import AiDocumentClient
 
     context.ai_documents = ai_documents or AiDocumentClient.from_settings(settings)

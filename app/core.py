@@ -38,10 +38,12 @@ class Settings:
     # Optional internal AI server (repo AI). Empty keeps local extraction.
     ai_service_url: str = ""
     ai_service_api_key: str = ""
+    # gemini:<model> IDs generated through the AI server; empty keeps recognition only.
+    ai_service_models: tuple = ()
     # Browser origins allowed to call the API cross-origin. Empty: same-origin only.
     cors_allowed_origins: tuple = ()
 
-    LIST_FIELDS = ("enabled_models", "cors_allowed_origins")
+    LIST_FIELDS = ("enabled_models", "ai_service_models", "cors_allowed_origins")
 
     @classmethod
     def from_env(cls):

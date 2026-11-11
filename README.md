@@ -51,6 +51,7 @@ foreach ($migrationFile in $migrationFiles) {
 | `AUTH_PUBLIC_KEY`, `AUTH_ISSUER`, `AUTH_AUDIENCE` | 외부 인증 제공자의 RS256 공개키 PEM·issuer·audience |
 | `ENABLED_MODELS` | 승인한 `openai:<model>` / `anthropic:<model>` ID의 쉼표 구분 목록; 비어 있으면 활성 모델 없음 |
 | `AI_SERVICE_URL`, `AI_SERVICE_API_KEY` | 선택. AI 서버(`AI` repo) 주소와 서버 간 키(AI 서버의 `AI_SERVER_API_KEY`). 설정하면 PDF/PNG/JPEG 인식을 AI 서버의 Upstage 문서 인식으로 처리하고, 비우면 기존 로컬 추출을 사용합니다. 자세한 내용은 [팀 repo 통합 안내](docs/INTEGRATION_REPOS.md) |
+| `AI_SERVICE_MODELS` | 선택. AI 서버로 생성할 `gemini:<model>` ID의 쉼표 구분 목록(AI 서버의 모델 허용 목록과 같은 값). 설정하면 이 모델로 요청한 분석·문제 생성·채점·학습 설명·Teach-back 리포트를 AI 서버 내부 API로 처리하고, Teach-back 질문은 같은 BYOK 키로 Gemini를 직접 호출합니다. `AI_SERVICE_URL`이 필요하며 `ENABLED_MODELS`와 겹칠 수 없습니다. |
 | `CORS_ALLOWED_ORIGINS` | 선택. 프런트엔드를 API와 다른 origin에서 서비스할 때 허용할 정확한 origin의 쉼표 구분 목록(예: `https://team4.vercel.app`). 경로·`*`·끝 슬래시는 거부하며, `production`에서는 https만 허용합니다. 비우면 CORS 헤더를 보내지 않습니다(같은 origin 프록시 사용). |
 
 필수 설정과 DB를 준비한 후 같은 환경을 사용하는 두 터미널에서 실행합니다.
