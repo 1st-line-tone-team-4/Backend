@@ -51,6 +51,7 @@ foreach ($migrationFile in $migrationFiles) {
 | `AUTH_PUBLIC_KEY`, `AUTH_ISSUER`, `AUTH_AUDIENCE` | 외부 인증 제공자의 RS256 공개키 PEM·issuer·audience |
 | `ENABLED_MODELS` | 승인한 `openai:<model>` / `anthropic:<model>` ID의 쉼표 구분 목록; 비어 있으면 활성 모델 없음 |
 | `AI_SERVICE_URL`, `AI_SERVICE_API_KEY` | 선택. AI 서버(`AI` repo) 주소와 서버 간 키(AI 서버의 `AI_SERVER_API_KEY`). 설정하면 PDF/PNG/JPEG 인식을 AI 서버의 Upstage 문서 인식으로 처리하고, 비우면 기존 로컬 추출을 사용합니다. 자세한 내용은 [팀 repo 통합 안내](docs/INTEGRATION_REPOS.md) |
+| `CORS_ALLOWED_ORIGINS` | 선택. 프런트엔드를 API와 다른 origin에서 서비스할 때 허용할 정확한 origin의 쉼표 구분 목록(예: `https://team4.vercel.app`). 경로·`*`·끝 슬래시는 거부하며, `production`에서는 https만 허용합니다. 비우면 CORS 헤더를 보내지 않습니다(같은 origin 프록시 사용). |
 
 필수 설정과 DB를 준비한 후 같은 환경을 사용하는 두 터미널에서 실행합니다.
 
@@ -71,7 +72,7 @@ python -m app.worker --once
 
 **이 서버에는 비밀번호 회원가입·로그인, 토큰 발급·갱신 API가 없습니다.** 팀은 외부 인증 제공자와 클라이언트 로그인 흐름을 먼저 정해야 합니다. `PROFILE=test`만으로 인증 대역이 활성화되지 않으며 테스트 코드가 대역을 명시적으로 주입합니다.
 
-현재 확인한 프런트엔드 저장소에는 코드나 branch ref가 없어 실행할 UI가 없습니다. 백엔드 연결 확인은 테스트 또는 API 클라이언트로 시작합니다. 브라우저 UI를 다른 origin에서 연결하려면 별도의 CORS 설정이 필요합니다. 현재 앱에는 CORS 미들웨어가 없으므로 같은 origin의 프록시를 쓰거나 허용 origin 정책을 구현해야 합니다.
+프런트엔드(`frontend` repo)는 기본적으로 같은 origin의 `/v1`을 호출합니다. 로컬 개발에서는 Vite가 `/v1`·`/health`를 `BACKEND_PROXY_TARGET`(기본 `http://127.0.0.1:8000`)으로 프록시하므로 CORS 설정이 필요 없습니다. 배포에서 프런트와 API를 다른 origin에 두면 프런트의 `VITE_API_BASE_URL`을 API의 `/v1` 절대 주소로 바꾸고, 백엔드 `CORS_ALLOWED_ORIGINS`에 프런트 origin을 넣습니다. 서명된 업로드 URL은 `PUBLIC_BASE_URL` 기준으로 만들어지므로 브라우저가 실제로 접근하는 API 주소와 같아야 합니다. 프런트 연동 범위와 검증 결과는 [팀 repo 통합 안내](docs/INTEGRATION_REPOS.md)에 있습니다.
 
 연동 순서는 다음과 같습니다.
 

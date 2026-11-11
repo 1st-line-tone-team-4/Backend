@@ -38,14 +38,18 @@ class Settings:
     # Optional internal AI server (repo AI). Empty keeps local extraction.
     ai_service_url: str = ""
     ai_service_api_key: str = ""
+    # Browser origins allowed to call the API cross-origin. Empty: same-origin only.
+    cors_allowed_origins: tuple = ()
+
+    LIST_FIELDS = ("enabled_models", "cors_allowed_origins")
 
     @classmethod
     def from_env(cls):
         return cls(
             **{
                 k: (
-                    tuple(filter(None, os.getenv(k.upper(), "").split(",")))
-                    if k == "enabled_models"
+                    tuple(x.strip() for x in os.getenv(k.upper(), "").split(",") if x.strip())
+                    if k in cls.LIST_FIELDS
                     else os.getenv(k.upper(), field.default)
                 )
                 for k, field in cls.__dataclass_fields__.items()
