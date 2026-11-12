@@ -35,14 +35,23 @@ class Settings:
     auth_issuer: str = ""
     auth_audience: str = ""
     enabled_models: tuple = ()
+    # Optional internal AI server (repo AI). Empty keeps local extraction.
+    ai_service_url: str = ""
+    ai_service_api_key: str = ""
+    # gemini:<model> IDs generated through the AI server; empty keeps recognition only.
+    ai_service_models: tuple = ()
+    # Browser origins allowed to call the API cross-origin. Empty: same-origin only.
+    cors_allowed_origins: tuple = ()
+
+    LIST_FIELDS = ("enabled_models", "ai_service_models", "cors_allowed_origins")
 
     @classmethod
     def from_env(cls):
         return cls(
             **{
                 k: (
-                    tuple(filter(None, os.getenv(k.upper(), "").split(",")))
-                    if k == "enabled_models"
+                    tuple(x.strip() for x in os.getenv(k.upper(), "").split(",") if x.strip())
+                    if k in cls.LIST_FIELDS
                     else os.getenv(k.upper(), field.default)
                 )
                 for k, field in cls.__dataclass_fields__.items()
@@ -83,6 +92,37 @@ def get_context(request: Request):
 
 def get_user(request: Request):
     return get_context(request).auth.authenticate(request)
+
+
+def request_envelope(request, body, *, query_as_dict=False):
+    """Build the existing request identity with caller-owned body serialization.
+
+    Raw query strings preserve duplicates/escaping for materials/jobs/teach-back;
+    content deliberately retains its historical last-value dictionary form.
+    """
+    return {
+        "method": request.method,
+        "path": request.url.path,
+        "query": dict(request.query_params) if query_as_dict else str(request.url.query),
+        "body": body,
+    }
+
+
+def strict_json(value):
+    """Reject non-JSON constants and duplicate keys rather than repairing output."""
+
+    def reject_constant(_):
+        raise ValueError("Non-JSON number")
+
+    def unique_object(pairs):
+        result = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError("Duplicate JSON key")
+            result[key] = item
+        return result
+
+    return json.loads(value, parse_constant=reject_constant, object_pairs_hook=unique_object)
 
 
 def _idempotency_digest(key, request_data):

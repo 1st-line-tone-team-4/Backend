@@ -1,9 +1,6 @@
 from datetime import datetime, timezone
 from dataclasses import dataclass
 import base64
-import json
-import hashlib
-import hmac
 from fastapi import APIRouter, Request, Header, Query
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
@@ -13,6 +10,8 @@ from uuid import UUID
 from sqlalchemy import select, delete, func
 from sqlalchemy.exc import IntegrityError
 from .core import ApiError, get_context, get_user, idempotent, idempotency_replay, uid, utcnow, iso
+from .core import request_envelope as reqdata
+from .pagination import decode_material_cursor, encode_material_cursor
 from .models import (
     Material,
     MaterialUnit,
@@ -26,6 +25,9 @@ from .models import (
     LearningExplanation,
     StorageDeletion,
 )
+
+from .projections import evidence_dto
+from .ai_context import material_name, wants_ai_context
 
 router = APIRouter()
 
@@ -121,20 +123,6 @@ def current(s, cid):
     )
 
 
-def evidence_dto(s, chunk_id, excerpt=None):
-    c = s.get(MaterialChunk, chunk_id)
-    if not c:
-        err(404, "NOT_FOUND", "Evidence not found.")
-    m = s.get(Material, c.material_id)
-    return {
-        "chunk_id": c.id,
-        "material_id": m.id,
-        "material_name": m.filename,
-        "page_number": c.page_number,
-        "excerpt": c.content if excerpt is None else excerpt,
-    }
-
-
 def version_dto(s, v):
     items = s.scalars(
         select(ConceptChecklistItem)
@@ -170,10 +158,17 @@ def get_confirmed_version(s, user_id, concept_version_id, require_current=False)
     return v
 
 
-def extract(m, data):
+def extract(m, data, *, require_text=True):
     if len(data) != m.size_bytes:
         err(422, "INVALID_UPLOAD", "Upload size does not match.")
-    return extract_bytes(m.mime_type, data)
+    if require_text:
+        return extract_bytes(m.mime_type, data)
+    return extract_bytes(m.mime_type, data, require_text=False)
+
+
+def ai_recognizes(ctx, mime_type):
+    ai_documents = getattr(ctx, "ai_documents", None)
+    return ai_documents is not None and ai_documents.handles(mime_type)
 
 
 @dataclass(frozen=True)
@@ -201,10 +196,6 @@ class PreparedAnalysis:
     material: MaterialSnapshot
     job_id: str
     payload: dict
-
-
-def reqdata(request, body):
-    return {"method": request.method, "path": request.url.path, "query": str(request.url.query), "body": body}
 
 
 @router.post("/materials")
@@ -271,7 +262,12 @@ async def put_file(materialId: str, request: Request, token: str):
     content = bytes(data)
     if len(content) != size_bytes:
         err(422, "INVALID_UPLOAD", "Upload size does not match.")
-    await run_in_threadpool(extract_bytes, mime_type, content)
+    # Match complete(): an enabled recognizer supplies text for scanned PDFs.
+    # Keep the ordinary parser call unchanged for non-OCR deployments/types.
+    if ai_recognizes(ctx, mime_type):
+        await run_in_threadpool(extract_bytes, mime_type, content, require_text=False)
+    else:
+        await run_in_threadpool(extract_bytes, mime_type, content)
 
     def commit():
         # Stage and fsync without a DB connection, then re-check under a short
@@ -334,9 +330,16 @@ def complete(
     # Parsing is bounded by extraction.py and never holds a DB connection. The
     # immutable object key is checked again with all other mutable state below.
     source_data = ctx.storage.read(snapshot.storage_key)
-    pages = extract(snapshot, source_data)
+    # With the AI server configured, a scanned PDF (no text layer) is accepted:
+    # Upstage OCR supplies the text in the analysis job.
+    pages = extract(snapshot, source_data, require_text=not ai_recognizes(ctx, snapshot.mime_type))
     preflight = getattr(ctx.providers, "preflight", None)
-    if snapshot.mime_type.startswith("image/") and callable(preflight):
+    # Vision limits apply only when the image itself goes to the LLM provider.
+    if (
+        snapshot.mime_type.startswith("image/")
+        and callable(preflight)
+        and not ai_recognizes(ctx, snapshot.mime_type)
+    ):
         from .providers import ProviderFailure
 
         try:
@@ -392,37 +395,16 @@ def listing(
         if not include_archived:
             q = q.where(Material.archived.is_(False))
         if cursor is not None:
-            try:
-                raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
-                payload, signature = raw.rsplit(b".", 1)
-                expected = hmac.new(ctx.storage.secret, payload, hashlib.sha256).hexdigest().encode()
-                if not hmac.compare_digest(signature, expected):
-                    raise ValueError()
-                o = json.loads(payload)
-                if o["user"] != user or o["archived"] != include_archived:
-                    raise ValueError()
-                dt = datetime.fromisoformat(o["time"])
-                cid = o["id"]
-            except Exception:
-                err(422, "INVALID_CURSOR", "Invalid cursor.")
+            dt, cid = decode_material_cursor(cursor, user, include_archived, ctx.storage.secret)
             q = q.where((Material.created_at < dt) | ((Material.created_at == dt) & (Material.id < cid)))
         rows = s.scalars(q.order_by(Material.created_at.desc(), Material.id.desc()).limit(limit + 1)).all()
         more = len(rows) > limit
         rows = rows[:limit]
         nxt = None
         if more:
-            payload = json.dumps(
-                {
-                    "user": user,
-                    "archived": include_archived,
-                    "time": rows[-1].created_at.isoformat(),
-                    "id": rows[-1].id,
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
-            signature = hmac.new(ctx.storage.secret, payload, hashlib.sha256).hexdigest().encode()
-            nxt = base64.urlsafe_b64encode(payload + b"." + signature).decode().rstrip("=")
+            nxt = encode_material_cursor(
+                rows[-1].created_at, rows[-1].id, user, include_archived, ctx.storage.secret
+            )
         return {"data": [mdto(m) for m in rows], "next_cursor": nxt}
 
 
@@ -675,10 +657,10 @@ def remove(materialId: str, request: Request):
     return Response(status_code=204)
 
 
-def analysis_chunks(m, data, job_id):
+def analysis_chunks(m, data, job_id, pages=None):
     import uuid
 
-    pages = extract(m, data)
+    pages = extract(m, data) if pages is None else pages
     chunks = []
     for page, text in enumerate(pages, 1):
         for start in range(0, len(text), 4000):
@@ -727,6 +709,16 @@ class AnalysisHandler:
         m = snapshot
         data = self.ctx.storage.read(m.storage_key)
         instructions = "Return exactly {units:[{title,concepts:[{name,summary,checklist_items:[string],evidence:[{chunk_id,quote}]}]}]}. Cite only supplied chunk IDs; each quote must be an exact nonempty substring of that chunk."
+        if ai_recognizes(self.ctx, m.mime_type):
+            # Local validation still runs first (format/limits); recognition text
+            # then comes from the AI server, so images become plain text chunks.
+            extract(m, data, require_text=False)
+            pages = self.ctx.ai_documents.extract_pages(m.mime_type, data, material_id=m.id)
+            payload = {
+                "instructions": instructions,
+                "chunks": analysis_chunks(m, data, m.latest_job_id, pages),
+            }
+            return PreparedAnalysis(m, m.latest_job_id, payload)
         if m.mime_type.startswith("image/"):
             import uuid
 
@@ -749,7 +741,13 @@ class AnalysisHandler:
         return m
 
     def apply_prepared(self, s, job, prepared):
-        self._revalidate_prepared(s, job, prepared)
+        m = self._revalidate_prepared(s, job, prepared)
+        if "chunks" in prepared.payload and wants_ai_context(self.ctx, job.model_id):
+            # The AI server needs the material identity carried by every SourceChunk.
+            return {
+                **prepared.payload,
+                "ai_context": {"material_id": m.id, "material_name": material_name(m)},
+            }
         return prepared.payload
 
     def prepare(self, s, job):
@@ -763,7 +761,9 @@ class AnalysisHandler:
 
     def persist_prepared(self, s, job, output, prepared):
         m = self._revalidate_prepared(s, job, prepared)
-        if m.mime_type.startswith("image/"):
+        # AI-server recognition already turned an image into text chunks; only the
+        # vision path (no "chunks" in the prepared payload) returns source_text.
+        if m.mime_type.startswith("image/") and "chunks" not in prepared.payload:
             source = output.get("source_text") if isinstance(output, dict) else None
             if not isinstance(source, str) or not source.strip() or len(source) > 100000:
                 err(422, "INVALID_OUTPUT", "Image transcription is invalid.")

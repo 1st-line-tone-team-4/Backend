@@ -1,0 +1,5220 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Team4 A learning APIs in the integrated server",
+    "version": "1.3.0-backend-proposal",
+    "description": "Integrated A and B routes. See README for external authentication and deployment prerequisites."
+  },
+  "servers": [
+    {
+      "url": "/v1"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/me": {
+      "get": {
+        "operationId": "getMe",
+        "responses": {
+          "200": {
+            "description": "getMe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/UserProfile"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/exam-goals": {
+      "get": {
+        "operationId": "listExamGoals",
+        "responses": {
+          "200": {
+            "description": "listExamGoals",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ExamGoal"
+                      }
+                    },
+                    "next_cursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "createExamGoal",
+        "description": "exam_date는 Asia/Seoul 오늘 이상. 180일 초과도 목표 저장은 허용하되 course_preview.eligible=false. 상세 계획 생성은0..180일만. daily_minutes/proficiency_level은 입력·DB 모두 제거. 기존 계획은 목표 변경으로 덮어쓰지 않으며 explicit reschedule 필요.",
+        "responses": {
+          "201": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ExamGoal"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamGoalInput"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ]
+      }
+    },
+    "/exam-goals/{goalId}": {
+      "parameters": [
+        {
+          "name": "goalId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "patch": {
+        "operationId": "updateExamGoal",
+        "description": "전체 ExamGoal을 반환한다. 날짜 변경 후 기존 계획은 immutable이며 명시적 reschedule. 과거로 날짜 변경422.",
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ExamGoal"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "data": {
+                    "id": "11111111-1111-4111-8111-111111111111",
+                    "title": "시험 준비",
+                    "exam_type": "other",
+                    "exam_date": "2026-11-10",
+                    "status": "active",
+                    "course_preview": {
+                      "days_remaining": 10,
+                      "eligible": true,
+                      "reason": null,
+                      "stages": [
+                        "concept",
+                        "practice",
+                        "teach_back",
+                        "review"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamGoalPatch"
+              }
+            }
+          }
+        },
+        "parameters": []
+      }
+    },
+    "/study-plans": {
+      "post": {
+        "operationId": "createStudyPlan",
+        "description": "동기적 결정론적 계획(추가AI/비용 없음). active goal, 오늘~180일, ready·not archived 자료와 confirmed current versions 필요. 각 unit의 개념별 solve5/teach_back1/review1 task를 순서대로 생성. material 입력순→unit.ordinal→concept.created_at,id 순, 각 개념 solve→teach_back→review. N개 task의 i(0-based) due=today+floor(i*D/N), D=max(1,시험일까지 일수), 시험 전일 이내; 당일시험은 오늘. 목표당 active plan1개, 중복409 ACTIVE_PLAN_EXISTS. 시간 추정/일일시간 저장 없음. 상세tasks최대6000(자료20×자료별concept100×3). 초과시422 RESOURCE_LIMIT_REACHED,조용히자르지않음. PlanTask의 title/display_order/concepts 표시 계약을 적용하며 tasks는 display_order ASC이다.",
+        "responses": {
+          "201": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/StudyPlan"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "exam_goal_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "material_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "exam_goal_id",
+                  "material_ids"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ]
+      },
+      "get": {
+        "operationId": "listStudyPlans",
+        "responses": {
+          "200": {
+            "description": "본인 계획 발견/재진입. generated_at 내림차순/id 동률 순.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/StudyPlanSummary"
+                      }
+                    },
+                    "next_cursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "exam_goal_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "superseded"
+              ]
+            }
+          }
+        ],
+        "description": " 목록은StudyPlanSummary(material_ids/task_count, tasks제외),상세GET에만tasks전체. material_ids는study_plan_materials.ordinal순."
+      }
+    },
+    "/study-plans/{planId}": {
+      "parameters": [
+        {
+          "name": "planId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getStudyPlan",
+        "responses": {
+          "200": {
+            "description": "getStudyPlan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/StudyPlan"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "description": " PlanTask의 title/display_order/concepts 표시 계약을 적용하며 tasks는 display_order ASC이다."
+      }
+    },
+    "/study-plans/{planId}/reschedule": {
+      "parameters": [
+        {
+          "name": "planId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "rescheduleStudyPlan",
+        "description": "active plan만 허용. goal 잠금, 새 revision/ID. 완료task는 새 revision에 복제하지 않고 이전 이력 유지; pending/in_progress/skipped 작업을 남은 날짜에 균등 배치, task version 핀 유지. 기존 revision superseded. 이전 task 결과는 남지만 새 task 완료량에는 자동 합산하지 않음. 남은작업0이면422 NO_REMAINING_TASKS. 구버전 task에 신규학습 시작409. 새task.target_count는max(1,이전target_count-이전completed_count). 남은작업은기존ordinal순. 재배치에활성session/grade/questionjob 있으면409 JOB_IN_PROGRESS,완료/포기후재요청. 잔여tasks<=6000 유지,초과면422 RESOURCE_LIMIT_REACHED,조용히절단안함. PlanTask의 title/display_order/concepts 표시 계약을 적용하며 tasks는 display_order ASC이다.",
+        "responses": {
+          "201": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/StudyPlan"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ]
+      }
+    },
+    "/plan-tasks/{taskId}": {
+      "parameters": [
+        {
+          "name": "taskId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "patch": {
+        "operationId": "updatePlanTaskStatus",
+        "description": "review만 completed 수동 가능, solve/teach_back completed는 실적 집계만(수동요청422). skipped는 미완료task만. pending은 skipped/review completed 취소만. solve는 서로다른 question의 succeeded grade 개수, teach_back은 completed session 개수; 한 task와 같은 버전 범위만. target이상 자동completed+completed_at, 미만1개이상in_progress. skipped는 today progress 분모에서 제외; 분모0 progress0.",
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PlanTask"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "data": {
+                    "id": "11111111-1111-4111-8111-111111111111",
+                    "due_date": "2026-10-31",
+                    "task_type": "review",
+                    "concept_ids": [
+                      "11111111-1111-4111-8111-111111111111"
+                    ],
+                    "concept_version_ids": [
+                      "22222222-2222-4222-8222-222222222222"
+                    ],
+                    "target_count": 1,
+                    "completed_count": 1,
+                    "status": "completed",
+                    "completed_at": "2026-10-31T12:00:00Z",
+                    "title": "운동량 보존 · 복습하기",
+                    "display_order": 1,
+                    "concepts": [
+                      {
+                        "concept_id": "11111111-1111-4111-8111-111111111111",
+                        "concept_version_id": "22222222-2222-4222-8222-222222222222",
+                        "concept_name": "운동량 보존",
+                        "material_id": "00000004-1111-4111-8111-111111111111",
+                        "unit_id": "00000005-1111-4111-8111-111111111111",
+                        "unit_title": "운동량과 충돌"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "completed",
+                      "skipped"
+                    ]
+                  }
+                },
+                "required": [
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": []
+      }
+    },
+    "/today": {
+      "get": {
+        "operationId": "getToday",
+        "responses": {
+          "200": {
+            "description": "getToday",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TodaySummary"
+                    }
+                  }
+                },
+                "examples": {
+                  "with_plan": {
+                    "summary": "시험일 2026-11-10인 활성 목표",
+                    "value": {
+                      "data": {
+                        "date": "2026-10-31",
+                        "progress": 0,
+                        "tasks": [
+                          {
+                            "id": "00000001-1111-4111-8111-111111111111",
+                            "due_date": "2026-10-31",
+                            "task_type": "solve",
+                            "concept_ids": [
+                              "00000002-1111-4111-8111-111111111111"
+                            ],
+                            "concept_version_ids": [
+                              "00000003-1111-4111-8111-111111111111"
+                            ],
+                            "target_count": 5,
+                            "completed_count": 0,
+                            "status": "pending",
+                            "completed_at": null,
+                            "title": "운동량 보존 · 문제 풀기",
+                            "display_order": 1,
+                            "concepts": [
+                              {
+                                "concept_id": "00000002-1111-4111-8111-111111111111",
+                                "concept_version_id": "00000003-1111-4111-8111-111111111111",
+                                "concept_name": "운동량 보존",
+                                "material_id": "00000004-1111-4111-8111-111111111111",
+                                "unit_id": "00000005-1111-4111-8111-111111111111",
+                                "unit_title": "운동량과 충돌"
+                              }
+                            ]
+                          }
+                        ],
+                        "next_action": null,
+                        "exam_goal_id": "00000006-1111-4111-8111-111111111111",
+                        "study_plan_id": "00000007-1111-4111-8111-111111111111",
+                        "days_remaining": 10
+                      }
+                    }
+                  },
+                  "no_selected_goal": {
+                    "value": {
+                      "data": {
+                        "date": "2026-10-31",
+                        "progress": 0,
+                        "tasks": [],
+                        "next_action": null,
+                        "exam_goal_id": null,
+                        "study_plan_id": null,
+                        "days_remaining": null
+                      }
+                    }
+                  },
+                  "selected_goal_without_plan": {
+                    "value": {
+                      "data": {
+                        "date": "2026-10-31",
+                        "progress": 0,
+                        "tasks": [],
+                        "next_action": null,
+                        "exam_goal_id": "00000006-1111-4111-8111-111111111111",
+                        "study_plan_id": null,
+                        "days_remaining": 10
+                      }
+                    }
+                  },
+                  "exam_day_or_past": {
+                    "summary": "선택 목표의 시험일이 오늘 또는 과거인 경우",
+                    "value": {
+                      "data": {
+                        "date": "2026-10-31",
+                        "progress": 0,
+                        "tasks": [],
+                        "next_action": null,
+                        "exam_goal_id": "00000006-1111-4111-8111-111111111111",
+                        "study_plan_id": null,
+                        "days_remaining": 0
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "description": "Asia/Seoul 오늘 날짜를 date로 반환한다. exam_goal_id 지정 시 본인 목표만(타인/없음404); 해당 목표가 inactive이거나 active plan이 없으면 exam_goal_id는 유지하고 study_plan_id=null, tasks=[],progress=0,next_action=null이다. 미지정 시 본인 active goal+active plan 조합 중 plan.generated_at DESC,id DESC 첫 계획 하나를 선택하며 목표를 혼합하지 않는다. 선택 조합이 없으면 두 scope ID와 days_remaining은 null이다. days_remaining은 선택한 목표가 있으면 max(0,exam_date-date)의 달력 일수로 필수 반환한다. 당일 및 지난 시험은 0, 계획 부재와 목표 부재는 구분한다. 해당 plan의 due_date<=date tasks 전체(최대6000)를 display_order ASC로 반환하며 title,concepts의 표시명과 정확한 버전 ID를 포함한다. progress=completed/(전체-skipped),분모0은0. next_action은 선택 plan의 pinned concept들 중 가장 최근 pending action.text,없으면null. 집계는 페이지가 아닌 선택 scope 전체이다.",
+        "parameters": [
+          {
+            "name": "exam_goal_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": false
+          }
+        ]
+      }
+    },
+    "/questions/{questionId}/attempts": {
+      "parameters": [
+        {
+          "name": "questionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "submitAttempt",
+        "description": "본인 set의 question에만 제출. 선택형 옵션2..5/정답1개, selected_option_ids 정확히1개. short_answer는 빈칸 문자열 또는 짧은답, text1..12000. 타입/옵션/관계 검증422. 한 question당 활성grade1개. 정답도 grade job으로 동일 계약, answer_key는 제출전 노출 금지. 결과와 집계는 트랜잭션, 같은 question 재시도는 task count 중복 증가 안함.",
+        "responses": {
+          "202": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Accepted"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "answer": {
+                    "$ref": "#/components/schemas/QuestionAnswer"
+                  },
+                  "question_set_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "model_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  }
+                },
+                "required": [
+                  "answer",
+                  "question_set_id",
+                  "model_id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/AIKey"
+          }
+        ]
+      },
+      "get": {
+        "operationId": "listQuestionAttempts",
+        "responses": {
+          "200": {
+            "description": "listQuestionAttempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionAttemptPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ]
+      }
+    },
+    "/teachback-sessions": {
+      "post": {
+        "operationId": "createTeachbackSession",
+        "description": "confirmed version 소유권 검사. task는 teach_back+정확한 버전; attempt/previous는 본인 같은 concept(다른 버전 허용, 비교는 동버전만). task별 active session 중복409. 초기 active, 질문수0, 자동 메시지/AI호출 없음. attempt참조는graded일때만,failed/grading은422.",
+        "responses": {
+          "201": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TeachbackSession"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "concept_version_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "task_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "attempt_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "previous_session_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "explanation_language": {
+                    "type": "string",
+                    "enum": [
+                      "ko",
+                      "en"
+                    ]
+                  },
+                  "student_persona": {
+                    "type": "string",
+                    "enum": [
+                      "curious_beginner",
+                      "confused_friend",
+                      "exam_candidate"
+                    ]
+                  }
+                },
+                "required": [
+                  "concept_version_id",
+                  "explanation_language",
+                  "student_persona"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ]
+      }
+    },
+    "/teachback-sessions/{sessionId}": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getTeachbackSession",
+        "responses": {
+          "200": {
+            "description": "getTeachbackSession",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TeachbackSession"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "abandonSession",
+        "description": "소유 세션을 abandoned로 포기한다. active이고 queued/running Job이 없으면 허용한다. report_pending도 최신 Job이 같은 소유자·세션의 report Job이고 succeeded/failed/outcome_unknown으로 종료되었으며 저장된 report가 없으면 허용한다. queued/running이면409 JOB_IN_PROGRESS. 이미 completed이거나 report가 저장된 세션의 완료 상태·결과는 변경하지 않고409. 이미 abandoned인 세션에 같은 PATCH를 반복하면 현재 DTO를200으로 반환한다. 이 정리 작업은 연결된 계획/목표가 비활성 또는 task가 skipped여도 가능하며 학습 완료량을 변경하지 않는다. 기존 메시지·latest_job_id·Job 상태/오류/입력·보고서 이력은 삭제하지 않는다. 새 디버깅 원문이나 비밀정보를 저장하지 않으며 기존 소유권·자료 삭제 제한·보존 규칙을 유지한다. 포기 후 기존 Job의 retry/restart는409로 거절한다. 원래 재처리 적격인 Job은 STALE_JOB으로 차단하며, 상태 자체가 부적격이면 기존 JOB_NOT_RETRYABLE/JOB_NOT_RESTARTABLE 오류 순서를 유지한다. 늦은 worker 결과도 저장되지 않는다. 이 PATCH는 상태 설정 자체가 멱등적이며 Idempotency-Key를 추가로 요구하지 않는다.",
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TeachbackSession"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "abandoned"
+                    ]
+                  }
+                },
+                "required": [
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": []
+      }
+    },
+    "/teachback-sessions/{sessionId}/messages": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "listTeachbackMessages",
+        "responses": {
+          "200": {
+            "description": "sequence_no 오름차순. 커서는 동일 순서를 유지.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionMessagePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "sendTeachbackMessage",
+        "description": "active에서 사용자 설명 완료 후 한 번 전송(녹음중 호출 없음). browser STT로 변환하여 사용자가 확인한 텍스트만 전송; 원음 미저장, STT 불가시 text fallback. user message와 job 먼저 원자저장. 세션당활성job1개, sequence unique. assistant 질문은 최대3회;3회 후422 QUESTION_LIMIT_REACHED, complete만 가능. 성공시에만 question_count증가; 실패재시도는 기존user message 사용. 결과URL=messages 목록. 질문3개를받았다면 /final-answer로최종답변을비용없이제출하고complete. terminal실패는 jobs restart로같은user message 재사용.",
+        "responses": {
+          "202": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Accepted"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 12000
+                  },
+                  "input_mode": {
+                    "type": "string",
+                    "enum": [
+                      "text",
+                      "voice_transcript"
+                    ]
+                  },
+                  "model_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  }
+                },
+                "required": [
+                  "content",
+                  "input_mode",
+                  "model_id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/AIKey"
+          }
+        ]
+      }
+    },
+    "/teachback-sessions/{sessionId}/complete": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "completeTeachbackSession",
+        "description": "active+사용자메시지1개이상+활성message job없음. report_pending 전이. report job 실패시 report_pending 유지, job의 retry 정책 사용; 임의 새 complete로 중복 보고서 생성 금지. 성공시 report+모든criteria+action 생성 및 session completed 원자저장. 보고서 terminal실패/unknown은 jobs restart로동일session 복구한다. 질문3개후마지막답변을건너뛰는complete도허용하되생략내용은평가기준에따라누락/확인불가. report_pending에서 complete를 다시 호출하면 기존 report Job을202로 반환하고 새 작업을 만들지 않는다. 실패/결과불명은 공통 Job retry/restart로 복구하거나, 최신 보고서 작업이 종료되고 저장된 report가 없으면 세션 PATCH로 포기할 수 있다. 포기해도 기존 대화와 Job 이력을 보존한다.",
+        "responses": {
+          "202": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Accepted"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  }
+                },
+                "required": [
+                  "model_id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/AIKey"
+          }
+        ]
+      }
+    },
+    "/teachback-sessions/{sessionId}/report": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getTeachbackReport",
+        "responses": {
+          "200": {
+            "description": "getTeachbackReport",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SessionReport"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "description": "완료report만 반환. 아직보고서없음409 REPORT_NOT_READY + latest job는 session조회. 다른소유자404. 불변평가기준 전체 결과."
+      }
+    },
+    "/teachback-sessions/{sessionId}/feedback": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "reportIncorrectFeedback",
+        "responses": {
+          "201": {
+            "description": "report_item_id가 있으면 해당 세션 리포트의 항목인지 검사. 신고가 평가 기준을 자동 변경하지 않음.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/FeedbackReport"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "report_item_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uuid"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "incorrect",
+                      "unsupported",
+                      "unclear",
+                      "other"
+                    ]
+                  },
+                  "comment": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 2000
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "description": "본인 report만. report_item_id는 해당 session.report 항목이어야 함. reason/comment 접수만, 원평가 자동수정 없음."
+      }
+    },
+    "/records/weaknesses": {
+      "get": {
+        "operationId": "listWeaknesses",
+        "description": "본인 current confirmed version별. 최근 completed report2개 중 유효coverage가 동버전·동formula인 경우만 비교;delta>0.0001 improving,<−0.0001 declining,그외stable. 미만unknown. 오답수는 distinct question의 최신graded attempt가 false인 수. 버전경계 비교 금지.",
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Weakness"
+                      }
+                    },
+                    "next_cursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ]
+      }
+    },
+    "/records/sessions": {
+      "get": {
+        "operationId": "listSessionRecords",
+        "responses": {
+          "200": {
+            "description": "started_at 내림차순, 동률 id 기준. 본인 세션만.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSummaryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ]
+      }
+    },
+    "/attempts/{attemptId}": {
+      "parameters": [
+        {
+          "name": "attemptId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getAttempt",
+        "description": "getAttempt",
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/QuestionAttempt"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": []
+      }
+    },
+    "/records/actions": {
+      "get": {
+        "operationId": "listImprovementActions",
+        "description": "listImprovementActions",
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ImprovementAction"
+                      }
+                    },
+                    "next_cursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ]
+      }
+    },
+    "/records/actions/{actionId}": {
+      "parameters": [
+        {
+          "name": "actionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "patch": {
+        "operationId": "updateImprovementAction",
+        "description": "사용자 자가보고. followup은 본인 같은 concept의 보고서 이후 session만. completed는 자기보고 완료이며 능력 향상 인증 아님. 보고서의 원문 next_action은 불변.",
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ImprovementAction"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "attempted",
+                      "completed"
+                    ]
+                  },
+                  "followup_session_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "status",
+                  "followup_session_id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": []
+      }
+    },
+    "/records/public-attempts": {
+      "get": {
+        "operationId": "listPublicAttempts",
+        "description": "본인 풀이 snapshot. 철회 후에도 본인 결과 열람 가능; publication 페이지는404.",
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PublicAttempt"
+                      }
+                    },
+                    "next_cursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ]
+      }
+    },
+    "/teachback-sessions/{sessionId}/final-answer": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "submitFinalTeachbackAnswer",
+        "description": "active,question_count=3,마지막role=assistant,활성job없음일때만 세번째질문답변을user message로 저장. 추가AI질문/과금 없음. 저장후마지막role=user라재제출409(같은멱등키는같은응답). complete로보고서생성. 3회미만은일반messages 사용.",
+        "responses": {
+          "201": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SessionMessage"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 12000
+                  },
+                  "input_mode": {
+                    "type": "string",
+                    "enum": [
+                      "text",
+                      "voice_transcript"
+                    ]
+                  }
+                },
+                "required": [
+                  "content",
+                  "input_mode"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "parameters": {
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128
+        },
+        "description": "POST 필수. (user,operation,key) 24시간 보존. 동일 본문은 동일 HTTP status/body/job ID 반환. 다른 본문409 IDEMPOTENCY_CONFLICT. 키 자체는 비밀이 아니며 요청 hash에서 X-AI-Key 제외. 진행 중 요청은409 REQUEST_IN_PROGRESS+Retry-After. 응답 저장과 도메인 변경은 한 트랜잭션. 요청 hash에는 HTTP method+canonical path(path parameter 실제값)+canonical JSON+model_id 포함; query가 있으면 정렬하여 포함. 같은키로 다른 resourceId 요청409. raw키 제외."
+      },
+      "AIKey": {
+        "name": "X-AI-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "writeOnly": true
+        },
+        "description": "BYOK 키. TLS만 허용, 로그/트레이스/응답/멱등본문에 기록 금지. 브라우저 메모리만 보관. 비동기 worker 전달용 AES-GCM 암호문은 별도 TTL 저장소에 최대15분, 성공/실패 시 즉시 폐기. TTL 만료 시 job failed/CREDENTIAL_EXPIRED. retry는 새 키 재입력. provider endpoint는 서버 허용목록으로 고정."
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "표준 오류.401 인증 없음/만료,404 없음 또는 비소유,409 상태/참조 충돌,422 입력 계약 위반.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorEnvelope": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "request_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "details": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "request_id",
+              "details"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      },
+      "UserProfile": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timezone": {
+            "type": "string",
+            "const": "Asia/Seoul"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "display_name",
+          "timezone"
+        ],
+        "additionalProperties": false
+      },
+      "ExamGoalInput": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "exam_type": {
+            "type": "string",
+            "enum": [
+              "school_exam",
+              "toeic",
+              "toefl",
+              "entrance_exam",
+              "other"
+            ]
+          },
+          "exam_date": {
+            "type": "string",
+            "format": "date"
+          }
+        },
+        "required": [
+          "title",
+          "exam_type",
+          "exam_date"
+        ],
+        "additionalProperties": false
+      },
+      "ExamGoalPatch": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "exam_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused",
+              "completed"
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "minProperties": 1
+      },
+      "ExamGoal": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "exam_type": {
+            "type": "string",
+            "enum": [
+              "school_exam",
+              "toeic",
+              "toefl",
+              "entrance_exam",
+              "other"
+            ]
+          },
+          "exam_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused",
+              "completed"
+            ]
+          },
+          "course_preview": {
+            "$ref": "#/components/schemas/CoursePreview"
+          }
+        },
+        "required": [
+          "title",
+          "exam_type",
+          "exam_date",
+          "id",
+          "status",
+          "course_preview"
+        ],
+        "additionalProperties": false
+      },
+      "Material": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string",
+            "enum": [
+              "application/pdf",
+              "text/plain",
+              "image/png",
+              "image/jpeg"
+            ]
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20971520
+          },
+          "processing_status": {
+            "type": "string",
+            "enum": [
+              "upload_pending",
+              "queued",
+              "processing",
+              "ready",
+              "failed"
+            ]
+          },
+          "page_count": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "archived": {
+            "type": "boolean"
+          },
+          "latest_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "mime_type",
+          "size_bytes",
+          "processing_status",
+          "page_count",
+          "archived",
+          "latest_job_id",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "SourceEvidence": {
+        "type": "object",
+        "required": [
+          "chunk_id",
+          "material_id",
+          "material_name",
+          "page_number",
+          "excerpt"
+        ],
+        "properties": {
+          "chunk_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "material_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "material_name": {
+            "type": "string"
+          },
+          "page_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "excerpt": {
+            "type": "string"
+          }
+        }
+      },
+      "ConceptChecklistItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "ordinal",
+          "criterion"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "criterion": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "ConceptVersion": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_confirmed": {
+            "type": "boolean"
+          },
+          "is_current": {
+            "type": "boolean"
+          },
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checklist_items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConceptChecklistItem"
+            },
+            "maxItems": 50
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceEvidence"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "version_no",
+          "name",
+          "summary",
+          "is_confirmed",
+          "is_current",
+          "confirmed_at",
+          "checklist_items",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "ConceptSummary": {
+        "type": "object",
+        "properties": {
+          "concept_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "unit_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "current_version": {
+            "$ref": "#/components/schemas/ConceptVersion",
+            "description": "항상존재하는최대version_no 버전. confirmed가아닐수있고그때is_confirmed=false/confirmed_at=null/summary nullable. 개념과초기draft버전은분석결과한transaction으로생성하므로버전없는concept은응답하지않는다."
+          }
+        },
+        "required": [
+          "concept_id",
+          "unit_id",
+          "current_version"
+        ],
+        "additionalProperties": false
+      },
+      "ConceptVersionResult": {
+        "type": "object",
+        "properties": {
+          "concept_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "unit_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "$ref": "#/components/schemas/ConceptVersion"
+          }
+        },
+        "required": [
+          "concept_id",
+          "unit_id",
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "PlanTask": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "due_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "task_type": {
+            "type": "string",
+            "enum": [
+              "solve",
+              "teach_back",
+              "review"
+            ]
+          },
+          "concept_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "concept_version_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "target_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "completed_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "completed",
+              "skipped"
+            ]
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "display_order": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "concepts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanTaskConcept"
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "id",
+          "due_date",
+          "task_type",
+          "concept_ids",
+          "concept_version_ids",
+          "target_count",
+          "completed_count",
+          "status",
+          "completed_at",
+          "title",
+          "display_order",
+          "concepts"
+        ],
+        "additionalProperties": false,
+        "description": "title과 concepts는 서버가 구성하는 읽기 전용 표시 정보이며 별도 저장 입력이 아니다. display_order=plan_tasks.ordinal(계획 내 1부터 시작하는 유일 순서). concepts는 concept_version_id ASC로 정렬하며 concept_ids[i]/concept_version_ids[i]는 concepts[i]와 정확히 일치한다. title은 첫 concept_name + (여러 개면 \" 외 N개\") + \" · \" + task_type별 \"문제 풀기\"/\"설명하기\"/\"복습하기\". 고정 버전의 이름을 사용하고 최신 버전 이름으로 바꾸지 않는다.",
+        "examples": [
+          {
+            "id": "00000001-1111-4111-8111-111111111111",
+            "due_date": "2026-10-31",
+            "task_type": "solve",
+            "concept_ids": [
+              "00000002-1111-4111-8111-111111111111"
+            ],
+            "concept_version_ids": [
+              "00000003-1111-4111-8111-111111111111"
+            ],
+            "target_count": 5,
+            "completed_count": 0,
+            "status": "pending",
+            "completed_at": null,
+            "title": "운동량 보존 · 문제 풀기",
+            "display_order": 1,
+            "concepts": [
+              {
+                "concept_id": "00000002-1111-4111-8111-111111111111",
+                "concept_version_id": "00000003-1111-4111-8111-111111111111",
+                "concept_name": "운동량 보존",
+                "material_id": "00000004-1111-4111-8111-111111111111",
+                "unit_id": "00000005-1111-4111-8111-111111111111",
+                "unit_title": "운동량과 충돌"
+              }
+            ]
+          }
+        ]
+      },
+      "StudyPlan": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "exam_goal_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "superseded"
+            ]
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanTask"
+            },
+            "maxItems": 6000
+          },
+          "material_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 1,
+            "maxItems": 20,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "id",
+          "exam_goal_id",
+          "revision",
+          "status",
+          "generated_at",
+          "tasks",
+          "material_ids"
+        ],
+        "additionalProperties": false
+      },
+      "TodaySummary": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "progress": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanTask"
+            },
+            "maxItems": 6000
+          },
+          "next_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exam_goal_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "study_plan_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "days_remaining": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "description": "max(0, 선택한 exam_goal.exam_date - 응답 date)의 달력 일수. 두 날짜 모두 Asia/Seoul 기준이며 24시간 나눗셈이 아니다."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "date",
+          "progress",
+          "tasks",
+          "next_action",
+          "exam_goal_id",
+          "study_plan_id",
+          "days_remaining"
+        ],
+        "additionalProperties": false,
+        "description": "선택 목표가 없으면 exam_goal_id/study_plan_id/days_remaining=null, tasks=[],progress=0,next_action=null. 명시적으로 선택한 본인 목표는 계획이 없거나 inactive여도 exam_goal_id와 days_remaining을 반환하고 study_plan_id=null. 시험 당일·지난 시험은 days_remaining=0. tasks는 선택 계획의 due_date<=date를 display_order ASC로 반환한다.",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "exam_goal_id": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "exam_goal_id"
+              ]
+            },
+            "then": {
+              "properties": {
+                "days_remaining": {
+                  "type": "null"
+                },
+                "study_plan_id": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "days_remaining": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "study_plan_id": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "study_plan_id"
+              ]
+            },
+            "then": {
+              "properties": {
+                "tasks": {
+                  "maxItems": 0
+                },
+                "progress": {
+                  "const": 0
+                },
+                "next_action": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "exam_goal_id": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          }
+        ],
+        "examples": [
+          {
+            "date": "2026-10-31",
+            "progress": 0,
+            "tasks": [
+              {
+                "id": "00000001-1111-4111-8111-111111111111",
+                "due_date": "2026-10-31",
+                "task_type": "solve",
+                "concept_ids": [
+                  "00000002-1111-4111-8111-111111111111"
+                ],
+                "concept_version_ids": [
+                  "00000003-1111-4111-8111-111111111111"
+                ],
+                "target_count": 5,
+                "completed_count": 0,
+                "status": "pending",
+                "completed_at": null,
+                "title": "운동량 보존 · 문제 풀기",
+                "display_order": 1,
+                "concepts": [
+                  {
+                    "concept_id": "00000002-1111-4111-8111-111111111111",
+                    "concept_version_id": "00000003-1111-4111-8111-111111111111",
+                    "concept_name": "운동량 보존",
+                    "material_id": "00000004-1111-4111-8111-111111111111",
+                    "unit_id": "00000005-1111-4111-8111-111111111111",
+                    "unit_title": "운동량과 충돌"
+                  }
+                ]
+              }
+            ],
+            "next_action": null,
+            "exam_goal_id": "00000006-1111-4111-8111-111111111111",
+            "study_plan_id": "00000007-1111-4111-8111-111111111111",
+            "days_remaining": 10
+          },
+          {
+            "date": "2026-10-31",
+            "progress": 0,
+            "tasks": [],
+            "next_action": null,
+            "exam_goal_id": null,
+            "study_plan_id": null,
+            "days_remaining": null
+          },
+          {
+            "date": "2026-10-31",
+            "progress": 0,
+            "tasks": [],
+            "next_action": null,
+            "exam_goal_id": "00000006-1111-4111-8111-111111111111",
+            "study_plan_id": null,
+            "days_remaining": 10
+          }
+        ]
+      },
+      "Question": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "question_type": {
+            "type": "string",
+            "enum": [
+              "multiple_choice",
+              "short_answer"
+            ]
+          },
+          "concept_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "concept_version_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "difficulty": {
+            "type": "string",
+            "enum": [
+              "easy",
+              "medium",
+              "hard"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceEvidence"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "question_type",
+          "concept_ids",
+          "concept_version_ids",
+          "prompt",
+          "options",
+          "difficulty",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "MultipleChoiceAnswer": {
+        "type": "object",
+        "required": [
+          "type",
+          "selected_option_ids"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "multiple_choice"
+          },
+          "selected_option_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "uniqueItems": true,
+            "maxItems": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ShortAnswer": {
+        "type": "object",
+        "required": [
+          "type",
+          "text"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "short_answer"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 12000
+          }
+        },
+        "additionalProperties": false
+      },
+      "QuestionAnswer": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/MultipleChoiceAnswer"
+          },
+          {
+            "$ref": "#/components/schemas/ShortAnswer"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type",
+          "mapping": {
+            "multiple_choice": "#/components/schemas/MultipleChoiceAnswer",
+            "short_answer": "#/components/schemas/ShortAnswer"
+          }
+        }
+      },
+      "QuestionResult": {
+        "type": "object",
+        "required": [
+          "is_correct",
+          "feedback",
+          "correct_answer",
+          "explanation",
+          "evidence"
+        ],
+        "properties": {
+          "is_correct": {
+            "type": "boolean"
+          },
+          "feedback": {
+            "type": "string"
+          },
+          "correct_answer": {
+            "$ref": "#/components/schemas/QuestionAnswer"
+          },
+          "explanation": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceEvidence"
+            }
+          }
+        }
+      },
+      "QuestionAttempt": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "question_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "question_set_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "answer": {
+            "$ref": "#/components/schemas/QuestionAnswer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "grading",
+              "graded",
+              "failed"
+            ]
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuestionResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "answered_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "question_id",
+          "question_set_id",
+          "answer",
+          "status",
+          "result",
+          "job_id",
+          "answered_at"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "graded"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "result": {
+                  "$ref": "#/components/schemas/QuestionResult"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "result": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "QuestionAttemptPage": {
+        "type": "object",
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QuestionAttempt"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TeachbackSession": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "concept_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attempt_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "previous_session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "explanation_language": {
+            "type": "string",
+            "enum": [
+              "ko",
+              "en"
+            ]
+          },
+          "student_persona": {
+            "type": "string",
+            "enum": [
+              "curious_beginner",
+              "confused_friend",
+              "exam_candidate"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "report_pending",
+              "completed",
+              "abandoned"
+            ]
+          },
+          "question_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "latest_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "concept_id",
+          "concept_version_id",
+          "version_no",
+          "task_id",
+          "attempt_id",
+          "previous_session_id",
+          "explanation_language",
+          "student_persona",
+          "status",
+          "question_count",
+          "latest_job_id",
+          "started_at",
+          "completed_at"
+        ],
+        "additionalProperties": false
+      },
+      "SessionMessage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "input_mode": {
+            "type": "string",
+            "enum": [
+              "text",
+              "voice_transcript"
+            ]
+          },
+          "sequence_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "content",
+          "input_mode",
+          "sequence_no",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "ReportItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "concept_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "checklist_item_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "explained",
+              "partial",
+              "omission",
+              "error",
+              "unverified"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceEvidence"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "concept_id",
+          "concept_version_id",
+          "checklist_item_id",
+          "status",
+          "description",
+          "confidence",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "SessionReport": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "coverage": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "coverage_formula": {
+            "type": "string",
+            "const": "weighted-v1"
+          },
+          "assessable_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "weighted_score": {
+            "type": "number",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportItem"
+            },
+            "maxItems": 50
+          },
+          "next_action": {
+            "type": "string"
+          },
+          "action_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "concept_version_id",
+          "version_no",
+          "coverage",
+          "coverage_formula",
+          "assessable_count",
+          "weighted_score",
+          "items",
+          "next_action",
+          "action_id"
+        ],
+        "additionalProperties": false,
+        "description": "해당 immutable version의 모든 checklist에 정확히1개 결과. explained1,partial0.5,omission/error0; unverified 분모제외. assessable_count=count(status!=unverified), weighted_score=sum, coverage=round(score/count,4),count0→null. 근거가 부족하면 unverified로 처리, factual error는 근거 필수. 모델 임의 coverage 숫자 신뢰 금지; 서버 재계산. 버전 다른 report 간 향상률 비교하지 않음."
+      },
+      "SessionMessagePage": {
+        "type": "object",
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionMessage"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SessionSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "concept_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "report_pending",
+              "completed",
+              "abandoned"
+            ]
+          },
+          "explanation_language": {
+            "type": "string",
+            "enum": [
+              "ko",
+              "en"
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "concept_id",
+          "concept_version_id",
+          "version_no",
+          "status",
+          "explanation_language",
+          "started_at"
+        ],
+        "additionalProperties": false
+      },
+      "SessionSummaryPage": {
+        "type": "object",
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionSummary"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "FeedbackReport": {
+        "type": "object",
+        "required": [
+          "id",
+          "session_id",
+          "reason",
+          "status",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "report_item_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "incorrect",
+              "unsupported",
+              "unclear",
+              "other"
+            ]
+          },
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "received",
+              "reviewing",
+              "resolved",
+              "rejected"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Weakness": {
+        "type": "object",
+        "properties": {
+          "concept_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "concept_name": {
+            "type": "string"
+          },
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "latest_coverage": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "incorrect_attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "teachback_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "trend": {
+            "type": "string",
+            "enum": [
+              "improving",
+              "stable",
+              "declining",
+              "unknown"
+            ]
+          }
+        },
+        "required": [
+          "concept_id",
+          "concept_name",
+          "concept_version_id",
+          "latest_coverage",
+          "incorrect_attempts",
+          "teachback_count",
+          "trend"
+        ],
+        "additionalProperties": false
+      },
+      "CoursePreview": {
+        "type": "object",
+        "properties": {
+          "days_remaining": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "eligible": {
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "EXAM_TOO_FAR",
+                  "EXAM_PASSED"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "concept",
+                "practice",
+                "teach_back",
+                "review"
+              ]
+            }
+          }
+        },
+        "required": [
+          "days_remaining",
+          "eligible",
+          "reason",
+          "stages"
+        ],
+        "additionalProperties": false
+      },
+      "Unit": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "material_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "id",
+          "material_id",
+          "ordinal",
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "Job": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "analysis",
+              "questions",
+              "grade",
+              "message",
+              "report",
+              "learning_explanation"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "outcome_unknown"
+            ]
+          },
+          "resource_type": {
+            "type": "string",
+            "enum": [
+              "material",
+              "question_set",
+              "attempt",
+              "session",
+              "learning_explanation"
+            ]
+          },
+          "resource_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "attempt_no": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "CREDENTIAL_EXPIRED",
+                  "PROVIDER_AUTH",
+                  "PROVIDER_RATE_LIMIT",
+                  "PROVIDER_UNAVAILABLE",
+                  "INVALID_OUTPUT",
+                  "TIMEOUT_UNKNOWN",
+                  "INTERNAL_ERROR"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "previous_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "resource_type",
+          "resource_id",
+          "attempt_no",
+          "retryable",
+          "error_code",
+          "result_url",
+          "created_at",
+          "updated_at",
+          "previous_job_id"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "succeeded"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "result_url": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "retryable": {
+                  "const": false
+                },
+                "error_code": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "queued",
+                    "running",
+                    "outcome_unknown"
+                  ]
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "retryable": {
+                  "const": false
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Accepted": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "$ref": "#/components/schemas/Job"
+          }
+        },
+        "required": [
+          "job"
+        ],
+        "additionalProperties": false
+      },
+      "QuestionSet": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "unit_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "difficulty": {
+            "type": "string",
+            "enum": [
+              "easy",
+              "medium",
+              "hard"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "generating",
+              "ready",
+              "failed"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ordinal": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 20
+                },
+                "question": {
+                  "$ref": "#/components/schemas/Question"
+                },
+                "latest_attempt": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/QuestionAttempt"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "ordinal",
+                "question",
+                "latest_attempt"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 20
+          },
+          "next_ordinal": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "concept_version_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "id",
+          "unit_id",
+          "task_id",
+          "difficulty",
+          "count",
+          "status",
+          "items",
+          "next_ordinal",
+          "job_id",
+          "concept_version_ids"
+        ],
+        "additionalProperties": false
+      },
+      "ImprovementAction": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "report_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "concept_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "text": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "attempted",
+              "completed"
+            ]
+          },
+          "followup_session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "report_id",
+          "concept_id",
+          "text",
+          "status",
+          "followup_session_id",
+          "updated_at"
+        ],
+        "additionalProperties": false
+      },
+      "PublicQuestion": {
+        "type": "object",
+        "properties": {
+          "publication_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "question_type": {
+            "type": "string",
+            "enum": [
+              "multiple_choice",
+              "short_answer"
+            ]
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "difficulty": {
+            "type": "string",
+            "enum": [
+              "easy",
+              "medium",
+              "hard"
+            ]
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "verified_score": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerifiedScore"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "대상 verified 성적이 없으면 null. 조회 시 현재 상태·동의를 재검사하며 철회 후 즉시 제외하고 이전 eligible verified 1건으로 재선택, 없으면 null. publication snapshot에 점수를 고정하지 않는다."
+          }
+        },
+        "required": [
+          "publication_id",
+          "question_type",
+          "prompt",
+          "options",
+          "difficulty",
+          "keywords",
+          "published_at",
+          "verified_score"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "publication_id": "00000008-1111-4111-8111-111111111111",
+            "question_type": "short_answer",
+            "prompt": "외력이 0인 계에서 보존되는 물리량은?",
+            "options": [],
+            "difficulty": "easy",
+            "keywords": [
+              "운동량"
+            ],
+            "published_at": "2026-10-20T00:00:00Z",
+            "verified_score": {
+              "exam_type": "toeic",
+              "score": 900,
+              "max_score": 990,
+              "exam_date": "2026-10-30",
+              "status": "verified"
+            }
+          },
+          {
+            "publication_id": "00000008-1111-4111-8111-111111111111",
+            "question_type": "short_answer",
+            "prompt": "외력이 0인 계에서 보존되는 물리량은?",
+            "options": [],
+            "difficulty": "easy",
+            "keywords": [
+              "운동량"
+            ],
+            "published_at": "2026-10-20T00:00:00Z",
+            "verified_score": null
+          }
+        ]
+      },
+      "PublicAttempt": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "publication_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "answer": {
+            "$ref": "#/components/schemas/QuestionAnswer"
+          },
+          "is_correct": {
+            "type": "boolean"
+          },
+          "correct_answer": {
+            "$ref": "#/components/schemas/QuestionAnswer"
+          },
+          "explanation": {
+            "type": "string"
+          },
+          "answered_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "question_snapshot": {
+            "type": "object",
+            "properties": {
+              "question_type": {
+                "type": "string",
+                "enum": [
+                  "multiple_choice",
+                  "short_answer"
+                ]
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "text"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "difficulty": {
+                "type": "string",
+                "enum": [
+                  "easy",
+                  "medium",
+                  "hard"
+                ]
+              }
+            },
+            "required": [
+              "question_type",
+              "prompt",
+              "options",
+              "difficulty"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "publication_id",
+          "answer",
+          "is_correct",
+          "correct_answer",
+          "explanation",
+          "answered_at",
+          "question_snapshot"
+        ],
+        "additionalProperties": false
+      },
+      "ScoreClaim": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "public_attempt_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "exam_type": {
+            "type": "string",
+            "enum": [
+              "toeic",
+              "toefl",
+              "entrance_exam",
+              "other"
+            ]
+          },
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 99999999.99,
+            "multipleOf": 0.01
+          },
+          "max_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 99999999.99,
+            "multipleOf": 0.01,
+            "exclusiveMinimum": 0
+          },
+          "exam_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "upload_pending",
+              "submitted",
+              "verified",
+              "rejected",
+              "withdrawn"
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "public_attempt_id",
+          "exam_type",
+          "score",
+          "max_score",
+          "exam_date",
+          "status",
+          "reason",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "StudyPlanSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "exam_goal_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "superseded"
+            ]
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "material_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 1,
+            "maxItems": 20,
+            "uniqueItems": true
+          },
+          "task_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6000
+          }
+        },
+        "required": [
+          "id",
+          "exam_goal_id",
+          "revision",
+          "status",
+          "generated_at",
+          "material_ids",
+          "task_count"
+        ],
+        "additionalProperties": false
+      },
+      "PlanTaskConcept": {
+        "type": "object",
+        "properties": {
+          "concept_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "concept_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "material_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "unit_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "unit_title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "concept_id",
+          "concept_version_id",
+          "concept_name",
+          "material_id",
+          "unit_id",
+          "unit_title"
+        ],
+        "additionalProperties": false,
+        "description": "고정 concept_version_id의 name을 concept_name으로 반환한다. unit_id/material_id는 해당 concept의 부모, unit_title은 같은 단원의 title이다. ID와 표시명을 다른 버전/소유자에서 가져오지 않는다.",
+        "examples": [
+          {
+            "concept_id": "00000002-1111-4111-8111-111111111111",
+            "concept_version_id": "00000003-1111-4111-8111-111111111111",
+            "concept_name": "운동량 보존",
+            "material_id": "00000004-1111-4111-8111-111111111111",
+            "unit_id": "00000005-1111-4111-8111-111111111111",
+            "unit_title": "운동량과 충돌"
+          }
+        ]
+      },
+      "VerifiedScore": {
+        "type": "object",
+        "properties": {
+          "exam_type": {
+            "type": "string",
+            "enum": [
+              "toeic",
+              "toefl",
+              "entrance_exam",
+              "other"
+            ]
+          },
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 99999999.99,
+            "multipleOf": 0.01
+          },
+          "exam_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "max_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 99999999.99,
+            "multipleOf": 0.01,
+            "exclusiveMinimum": 0
+          },
+          "status": {
+            "type": "string",
+            "const": "verified"
+          }
+        },
+        "required": [
+          "exam_type",
+          "score",
+          "exam_date",
+          "max_score",
+          "status"
+        ],
+        "additionalProperties": false,
+        "description": "해당 publication의 공개 풀이에 연결된, 공개 동의가 있고 현재 status=verified인 성적 인증 중 decided_at DESC,id DESC 첫 1건의 공개 투영이다. 게시자 성적이 아니라 해당 공유 문제를 푼 이용자의 성적일 수 있다. 미검증/거절/철회는 반환하지 않는다. score<=max_score, TOEIC max_score=990, TOEFL=120. 이름·user_id·claim_id·attempt_id·증빙 URL·검토자·검토사유·원본자료는 공개하지 않는다. 학습효과나 법적 진위를 보증하지 않는다.",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "exam_type": {
+                  "const": "toeic"
+                }
+              },
+              "required": [
+                "exam_type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "max_score": {
+                  "const": 990
+                },
+                "score": {
+                  "maximum": 990
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "exam_type": {
+                  "const": "toefl"
+                }
+              },
+              "required": [
+                "exam_type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "max_score": {
+                  "const": 120
+                },
+                "score": {
+                  "maximum": 120
+                }
+              }
+            }
+          }
+        ],
+        "examples": [
+          {
+            "exam_type": "toeic",
+            "score": 900,
+            "max_score": 990,
+            "exam_date": "2026-10-30",
+            "status": "verified"
+          }
+        ]
+      },
+      "LearningExplanationInput": {
+        "type": "object",
+        "properties": {
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "explanation_language": {
+            "type": "string",
+            "enum": [
+              "ko",
+              "en"
+            ]
+          },
+          "model_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "concept_version_id",
+          "explanation_language",
+          "model_id"
+        ],
+        "additionalProperties": false,
+        "description": "확정 개념 버전과 소유 자료를 고정한다. summary를 덮어쓰거나 Teach-back 세션을 만들지 않는다.",
+        "examples": [
+          {
+            "concept_version_id": "00000003-1111-4111-8111-111111111111",
+            "explanation_language": "ko",
+            "model_id": "allowed-model-id"
+          }
+        ]
+      },
+      "LearningExplanationContent": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "explanation_markdown": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 24000
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/SourceEvidence"
+                },
+                {
+                  "properties": {
+                    "excerpt": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
+                    }
+                  }
+                }
+              ]
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "title",
+          "explanation_markdown",
+          "evidence"
+        ],
+        "additionalProperties": false,
+        "description": "자료 기반 학습용 설명: 개념을 단계별로 풀어쓴 설명과 예시, 원문 근거를 포함한다. evidence는 해당 고정 버전의 concept_version_evidence에 실제 존재하는 chunk만 포함한다. 본문은 최소 1개 근거의 chunk_id를 [근거: <chunk_id>] 형식으로 인용하며 모든 인용 ID는 evidence에 있어야 한다. 근거 없는 생성물/가공 인용/다른 자료는 INVALID_OUTPUT, 부분 결과는 게시하지 않는다. Markdown의 원시 HTML·script·외부 이미지 실행은 클라이언트에서 허용하지 않는다.",
+        "examples": [
+          {
+            "title": "운동량 보존을 이해하기",
+            "explanation_markdown": "계에 작용하는 외력의 합이 0이면 전체 운동량이 보존됩니다. 두 물체가 충돌할 때 각자의 운동량은 바뀔 수 있지만 합은 같습니다. [근거: 00000012-1111-4111-8111-111111111111]",
+            "evidence": [
+              {
+                "chunk_id": "00000012-1111-4111-8111-111111111111",
+                "material_id": "00000004-1111-4111-8111-111111111111",
+                "material_name": "물리학 강의자료.pdf",
+                "page_number": 12,
+                "excerpt": "외력의 합이 0인 계의 총운동량은 보존된다."
+              }
+            ]
+          }
+        ]
+      },
+      "LearningExplanation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "concept_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "concept_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "material_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "explanation_language": {
+            "type": "string",
+            "enum": [
+              "ko",
+              "en"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "generating",
+              "ready",
+              "failed",
+              "outcome_unknown"
+            ]
+          },
+          "latest_job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "model_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "readOnly": true,
+            "description": "현재 latest_job의 model_id. 생성 입력으로 고정되며 retry/restart에서 동일 값 사용. 재진입 시 이 값으로 복구 요청을 구성한다."
+          },
+          "content": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LearningExplanationContent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "concept_id",
+          "concept_version_id",
+          "material_id",
+          "explanation_language",
+          "status",
+          "latest_job_id",
+          "model_id",
+          "content",
+          "created_at",
+          "generated_at"
+        ],
+        "additionalProperties": false,
+        "description": "한 생성 결과를 가리키는 별도 자습 리소스. 생성 당시 confirmed version을 고정하고 이후 개념 수정에도 결과/근거/버전을 변경하지 않는다. ready 결과는 불변이며 조회는 AI를 호출하지 않는다. summary와 TeachbackSession/SessionReport는 별도 모델이고 생성·열람은 계획의 완료량이나 coverage를 자동 변경하지 않는다.",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "ready"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/components/schemas/LearningExplanationContent"
+                },
+                "generated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "content": {
+                  "type": "null"
+                },
+                "generated_at": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ],
+        "examples": [
+          {
+            "id": "00000010-1111-4111-8111-111111111111",
+            "concept_id": "00000002-1111-4111-8111-111111111111",
+            "concept_version_id": "00000003-1111-4111-8111-111111111111",
+            "material_id": "00000004-1111-4111-8111-111111111111",
+            "explanation_language": "ko",
+            "status": "ready",
+            "latest_job_id": "00000011-1111-4111-8111-111111111111",
+            "model_id": "allowed-model-id",
+            "content": {
+              "title": "운동량 보존을 이해하기",
+              "explanation_markdown": "계에 작용하는 외력의 합이 0이면 전체 운동량이 보존됩니다. 두 물체가 충돌할 때 각자의 운동량은 바뀔 수 있지만 합은 같습니다. [근거: 00000012-1111-4111-8111-111111111111]",
+              "evidence": [
+                {
+                  "chunk_id": "00000012-1111-4111-8111-111111111111",
+                  "material_id": "00000004-1111-4111-8111-111111111111",
+                  "material_name": "물리학 강의자료.pdf",
+                  "page_number": 12,
+                  "excerpt": "외력의 합이 0인 계의 총운동량은 보존된다."
+                }
+              ]
+            },
+            "created_at": "2026-10-31T00:00:00Z",
+            "generated_at": "2026-10-31T00:00:10Z"
+          },
+          {
+            "id": "00000010-1111-4111-8111-111111111111",
+            "concept_id": "00000002-1111-4111-8111-111111111111",
+            "concept_version_id": "00000003-1111-4111-8111-111111111111",
+            "material_id": "00000004-1111-4111-8111-111111111111",
+            "explanation_language": "ko",
+            "status": "generating",
+            "latest_job_id": "00000011-1111-4111-8111-111111111111",
+            "model_id": "allowed-model-id",
+            "content": null,
+            "created_at": "2026-10-31T00:00:00Z",
+            "generated_at": null
+          },
+          {
+            "id": "00000010-1111-4111-8111-111111111111",
+            "concept_id": "00000002-1111-4111-8111-111111111111",
+            "concept_version_id": "00000003-1111-4111-8111-111111111111",
+            "material_id": "00000004-1111-4111-8111-111111111111",
+            "explanation_language": "ko",
+            "status": "failed",
+            "latest_job_id": "00000011-1111-4111-8111-111111111111",
+            "model_id": "allowed-model-id",
+            "content": null,
+            "created_at": "2026-10-31T00:00:00Z",
+            "generated_at": null
+          },
+          {
+            "id": "00000010-1111-4111-8111-111111111111",
+            "concept_id": "00000002-1111-4111-8111-111111111111",
+            "concept_version_id": "00000003-1111-4111-8111-111111111111",
+            "material_id": "00000004-1111-4111-8111-111111111111",
+            "explanation_language": "ko",
+            "status": "outcome_unknown",
+            "latest_job_id": "00000011-1111-4111-8111-111111111111",
+            "model_id": "allowed-model-id",
+            "content": null,
+            "created_at": "2026-10-31T00:00:00Z",
+            "generated_at": null
+          }
+        ]
+      },
+      "LearningExplanationPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LearningExplanation"
+            },
+            "maxItems": 100
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "data": [
+              {
+                "id": "00000010-1111-4111-8111-111111111111",
+                "concept_id": "00000002-1111-4111-8111-111111111111",
+                "concept_version_id": "00000003-1111-4111-8111-111111111111",
+                "material_id": "00000004-1111-4111-8111-111111111111",
+                "explanation_language": "ko",
+                "status": "ready",
+                "latest_job_id": "00000011-1111-4111-8111-111111111111",
+                "model_id": "allowed-model-id",
+                "content": {
+                  "title": "운동량 보존을 이해하기",
+                  "explanation_markdown": "계에 작용하는 외력의 합이 0이면 전체 운동량이 보존됩니다. 두 물체가 충돌할 때 각자의 운동량은 바뀔 수 있지만 합은 같습니다. [근거: 00000012-1111-4111-8111-111111111111]",
+                  "evidence": [
+                    {
+                      "chunk_id": "00000012-1111-4111-8111-111111111111",
+                      "material_id": "00000004-1111-4111-8111-111111111111",
+                      "material_name": "물리학 강의자료.pdf",
+                      "page_number": 12,
+                      "excerpt": "외력의 합이 0인 계의 총운동량은 보존된다."
+                    }
+                  ]
+                },
+                "created_at": "2026-10-31T00:00:00Z",
+                "generated_at": "2026-10-31T00:00:10Z"
+              }
+            ],
+            "next_cursor": null
+          }
+        ]
+      }
+    }
+  },
+  "x-source": "https://app.notion.com/p/2-ff4893249c6683eca46d81441aa30332",
+  "x-error-catalog": {
+    "VALIDATION_ERROR": "422 필드/형식",
+    "RELATION_MISMATCH": "422 같은owner이나관계불일치",
+    "NOT_FOUND": "404 없음/다른owner",
+    "UNAUTHORIZED": "401 token",
+    "FORBIDDEN": "403 reviewer scope",
+    "IDEMPOTENCY_CONFLICT": "409 동일키다른요청",
+    "REQUEST_IN_PROGRESS": "409 최초요청처리중 Retry-After",
+    "JOB_IN_PROGRESS": "409 resource활성job",
+    "STALE_JOB": "409 현재job아님/후속상태전이",
+    "VERSION_CONFLICT": "409 base_version불일치",
+    "MATERIAL_IN_USE": "409 삭제대신archive",
+    "REPORT_NOT_READY": "409 보고서대기/실패",
+    "POSSIBLE_DUPLICATE_COST": "409 명시동의필요",
+    "RESOURCE_LIMIT_REACHED": "422 parent상한",
+    "PROVIDER_AUTH": "422 key권한",
+    "KEY_VALIDATION_UNAVAILABLE": "503 무과금검증미지원",
+    "RATE_LIMITED": "429 Retry-After",
+    "EXAM_TOO_FAR": "422 계획생성범위초과",
+    "EXAM_PASSED": "422 시험일지남"
+  },
+  "x-change-log": [
+    {
+      "at": "2026-10-31T12:42:43Z",
+      "change": "사용자 확인으로 크레딧 폐지 확정;app_credit_charging까지삭제"
+    },
+    {
+      "at": "2026-10-31",
+      "change": "외부v3리뷰:today목표scope/plan material_ids·목록요약/draft current_version/배열상한/timezone고정 명시"
+    },
+    {
+      "at": "2026-10-31",
+      "version": "1.3.0-backend-proposal",
+      "change": "사용자 피드백 4건: /today days_remaining와 task 표시정보; 개념요약/Teach-back과 별도 학습설명 생성/조회; verified_score 명명 DTO·실제 verified 예제·최소공개; publication 성공 consent_public=true 및 const 제약. 기존 크레딧 폐지/daily_minutes 삭제 유지."
+    }
+  ]
+}

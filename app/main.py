@@ -5,22 +5,26 @@ from types import SimpleNamespace
 import copy
 import json
 import logging
+import re
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
 from starlette.exceptions import HTTPException
 
 from .auth import JWTAuthenticator
-from .core import ApiError, Settings, api_error_handler, error_response, uid
+from .core import ApiError, Settings, api_error_handler, error_response, uid, get_user
 from .db import Database
-from .ports import TaskGateway
+from .a_gateway import CanonicalTaskGateway
 
 
-def build_context(settings=None, *, auth=None, providers=None, task_gateway=None, create_schema=False):
+def build_context(
+    settings=None, *, auth=None, providers=None, task_gateway=None, ai_documents=None, create_schema=False
+):
     settings = settings or Settings.from_env()
     if settings.profile not in {"production", "development", "test"}:
         raise ValueError("Unknown application profile")
-    if (auth is not None or providers is not None) and settings.profile != "test":
+    if (auth is not None or providers is not None or ai_documents is not None) and settings.profile != "test":
         raise ValueError("Authentication/provider substitutes are allowed only in test profile")
     if create_schema and settings.profile == "production":
         raise ValueError("Production schema changes require reviewed migrations")
@@ -31,7 +35,7 @@ def build_context(settings=None, *, auth=None, providers=None, task_gateway=None
     if settings.profile == "production" and not settings.database_url.startswith("mysql+pymysql://"):
         raise ValueError("Production requires the MySQL database configuration")
     from .storage import LocalStorage
-    from .providers import ProviderRegistry
+    from .ai_generation import build_providers
     from .credentials import Credentials
     from .jobs import JobService
     from .materials import AnalysisHandler
@@ -43,23 +47,63 @@ def build_context(settings=None, *, auth=None, providers=None, task_gateway=None
     context = SimpleNamespace(settings=settings, db=db)
     context.auth = auth or JWTAuthenticator(settings, db)
     context.storage = LocalStorage(settings)
-    context.providers = providers or ProviderRegistry(settings)
+    context.providers = providers or build_providers(settings)
+    from .ai_service import AiDocumentClient
+
+    context.ai_documents = ai_documents or AiDocumentClient.from_settings(settings)
     context.credentials = Credentials(
         Path(settings.storage_root) / ".credentials.sqlite3", settings.credential_encryption_key
     )
-    context.task_gateway = task_gateway or TaskGateway()
+    context.task_gateway = task_gateway or CanonicalTaskGateway()
     context.jobs = JobService(context)
     context.jobs.register("analysis", AnalysisHandler(context))
     context.jobs.register("questions", QuestionsHandler(context))
     context.jobs.register("learning_explanation", ExplanationHandler(context))
+    from language_learning_api.services.grading import GradeHandler
+    from language_learning_api.services.teachback_handlers import TeachbackHandler
+
+    context.jobs.register("grade", GradeHandler(context))
+    context.jobs.register("message", TeachbackHandler(context, "message"))
+    context.jobs.register("report", TeachbackHandler(context, "report"))
     return context
 
 
-def create_app(settings=None, *, auth=None, providers=None, task_gateway=None, create_schema=False):
+def cors_origins(settings):
+    """Exact browser origins (scheme://host[:port]) allowed cross-origin access."""
+    from urllib.parse import urlsplit
+
+    origins = tuple(getattr(settings, "cors_allowed_origins", ()) or ())
+    for origin in origins:
+        parts = urlsplit(origin)
+        if (
+            origin == "*"
+            or parts.scheme not in ("http", "https")
+            or not parts.hostname
+            or parts.username
+            or parts.password
+            or parts.path
+            or parts.query
+            or parts.fragment
+            or origin != f"{parts.scheme}://{parts.netloc}"
+        ):
+            raise ValueError("CORS_ALLOWED_ORIGINS entries must be exact http(s) origins")
+        if settings.profile == "production" and parts.scheme != "https":
+            raise ValueError("Production CORS origins must use https")
+    return origins
+
+
+def create_app(
+    settings=None, *, auth=None, providers=None, task_gateway=None, ai_documents=None, create_schema=False
+):
     context = build_context(
-        settings, auth=auth, providers=providers, task_gateway=task_gateway, create_schema=create_schema
+        settings,
+        auth=auth,
+        providers=providers,
+        task_gateway=task_gateway,
+        ai_documents=ai_documents,
+        create_schema=create_schema,
     )
-    app = FastAPI(title="Team4 Backend B", version="1.3.0", debug=False)
+    app = FastAPI(title="Team4 Learning Backend", version="1.3.0", debug=False)
     app.state.context = context
     app.add_exception_handler(ApiError, api_error_handler)
 
@@ -82,6 +126,22 @@ def create_app(settings=None, *, auth=None, providers=None, task_gateway=None, c
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response
+
+    origins = cors_origins(context.settings)
+    if origins:
+        from starlette.middleware.cors import CORSMiddleware
+
+        # Added last so it is outermost: preflights never reach auth/HTTPS checks.
+        # Bearer tokens only, so no cookies/credentials mode is needed.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(origins),
+            allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
+            allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-AI-Key"],
+            expose_headers=["X-Request-ID", "Retry-After"],
+            allow_credentials=False,
+            max_age=600,
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, exc):
@@ -107,24 +167,55 @@ def create_app(settings=None, *, auth=None, providers=None, task_gateway=None, c
     for router in (materials_router, content_router, jobs_router):
         app.include_router(router, prefix="/v1")
 
+    from language_learning_api.routers.exam_goals import router as goals_router
+    from language_learning_api.routers.study_plans import router as plans_router
+    from language_learning_api.routers.questions import router as attempts_router
+    from language_learning_api.routers.teachback import router as teachback_router
+    from language_learning_api.routers.records import router as records_router
+
+    for router in (goals_router, plans_router, attempts_router, teachback_router, records_router):
+        app.include_router(router)
+
+    @app.get("/v1/me")
+    def me(request: Request):
+        from .models import User
+
+        owner = get_user(request)
+        with context.db.transaction() as session:
+            user = session.get(User, owner)
+            if user is None:
+                raise ApiError(401, "UNAUTHORIZED", "Authentication required.")
+            return {"data": {key: getattr(user, key) for key in ("id", "email", "display_name", "timezone")}}
+
     @app.get("/health", include_in_schema=False)
     def health():
         return {"status": "ok"}
 
-    # Published docs describe only the implemented B portion, preserving the agreed DTOs.
+    # Publish only canonical operations actually mounted by the integrated server.
     source = json.loads(
         (Path(__file__).resolve().parents[1] / "contracts" / "openapi-1.3.0.json").read_text(encoding="utf-8")
     )
     source = copy.deepcopy(source)
-    source["info"]["title"] = "Team4 Backend B — implemented contract"
+    source["info"]["title"] = "Team4 Learning Backend — implemented contract"
     source["info"]["description"] = (
-        "B routes only. See README for A interfaces, test substitutes, and deployment prerequisites."
+        "Integrated A and B routes. See README for external authentication and deployment prerequisites."
     )
-    prefixes = ("/materials", "/question-sets", "/learning-explanations", "/ai/", "/jobs/")
+
+    def normalize(path):
+        return re.sub(r"\{[^}]+\}", "{}", path.removeprefix("/v1"))
+
+    inventory = get_openapi(title="Mounted routes", version="1.3.0", routes=app.routes)
+    mounted = {
+        (normalize(path), method) for path, operations in inventory["paths"].items() for method in operations
+    }
     source["paths"] = {
-        p: value
-        for p, value in source["paths"].items()
-        if p.startswith(prefixes) or p == "/questions/{questionId}"
+        path: {
+            method: operation
+            for method, operation in operations.items()
+            if method == "parameters" or (normalize(path), method) in mounted
+        }
+        for path, operations in source["paths"].items()
+        if any((normalize(path), method) in mounted for method in operations)
     }
     source.pop("x-contract-rules", None)
     source.pop("x-decisions", None)

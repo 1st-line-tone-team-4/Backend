@@ -1,16 +1,15 @@
-import base64
-import json
-import hashlib
-import hmac
 import re
 from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
-from .core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow
+from .core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow, request_envelope
+from .pagination import content_page as _page
+from .pagination import decode_content_cursor as _cursor_decode  # noqa: F401 - compatibility export
 from .models import (
     Concept,
     ConceptVersion,
@@ -30,6 +29,8 @@ from .models import (
 )
 from .materials import get_confirmed_version, evidence_dto, version_dto
 from .jobs import accepted
+from .projections import question_dto, question_dtos
+from .ai_context import study_context, wants_ai_context
 
 router = APIRouter()
 
@@ -62,21 +63,47 @@ def invalid():
     raise ApiError(422, "INVALID_OUTPUT", "Generated output is invalid.")
 
 
-def _version(session, user, vid, current=False):
-    return get_confirmed_version(session, user, vid, require_current=current)
+def _generation_material(session, user, material_id):
+    # Acceptance uses a current locking read after any owning task locks.
+    # populate_existing also replaces objects loaded before a lock wait.
+    material = session.scalar(
+        select(Material)
+        .where(Material.id == material_id, Material.user_id == user)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if material is None:
+        missing()
+    if material.archived or material.processing_status != "ready":
+        raise ApiError(422, "MATERIAL_NOT_READY", "Material is not available for generation.")
+    return material
 
 
-def _job_body(job):
-    return accepted(job)
-
-
-def _request_data(request, body):
-    return {
-        "method": request.method,
-        "path": request.url.path,
-        "query": dict(request.query_params),
-        "body": body,
-    }
+def _generation_version_for_acceptance(session, version_id, *, current=False):
+    # Call only after validating ownership/unit membership and locking material.
+    # Confirmation uses material -> version, so the current-version decision
+    # cannot race a new confirmation or reuse an earlier RR snapshot.
+    version = session.scalar(
+        select(ConceptVersion)
+        .where(ConceptVersion.id == version_id)
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
+    if version is None:
+        missing()
+    if not version.is_confirmed:
+        raise ApiError(422, "CONCEPT_NOT_CONFIRMED", "Concept version is not confirmed or current.")
+    if current:
+        current_id = session.scalar(
+            select(ConceptVersion.id)
+            .where(ConceptVersion.concept_id == version.concept_id)
+            .order_by(ConceptVersion.version_no.desc())
+            .limit(1)
+            .with_for_update(read=True)
+        )
+        if current_id != version.id:
+            raise ApiError(422, "CONCEPT_NOT_CONFIRMED", "Concept version is not confirmed or current.")
+    return version
 
 
 def _owned(session, cls, rid, user):
@@ -84,74 +111,6 @@ def _owned(session, cls, rid, user):
     if obj is None or obj.user_id != user:
         missing()
     return obj
-
-
-def _cursor_decode(cursor, secret, scope):
-    if not cursor:
-        return None
-    try:
-        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
-        payload, signature = raw.rsplit(b".", 1)
-        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest().encode()
-        if not hmac.compare_digest(signature, expected):
-            raise ValueError()
-        value = json.loads(payload)
-        if (
-            not isinstance(value, dict)
-            or set(value) != {"timestamp", "id", "scope"}
-            or value["scope"] != scope
-        ):
-            raise ValueError()
-        from datetime import datetime
-
-        stamp = datetime.fromisoformat(value["timestamp"])
-        if stamp.tzinfo is not None or str(UUID(value["id"])) != value["id"]:
-            raise ValueError()
-        return stamp, value["id"]
-    except Exception:
-        raise ApiError(422, "INVALID_CURSOR", "Invalid cursor.")
-
-
-def _page(session, stmt, model, limit, cursor, secret, scope):
-    c = _cursor_decode(cursor, secret, scope)
-    if c:
-        stmt = stmt.where(or_(model.created_at < c[0], and_(model.created_at == c[0], model.id < c[1])))
-    rows = list(session.scalars(stmt.limit(limit + 1)))
-    chosen = rows[:limit]
-    next_cursor = None
-    if len(rows) > limit:
-        last = chosen[-1]
-        payload = json.dumps(
-            {"timestamp": last.created_at.isoformat(), "id": last.id, "scope": scope},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-        signature = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest().encode()
-        next_cursor = base64.urlsafe_b64encode(payload + b"." + signature).decode().rstrip("=")
-    return chosen, next_cursor
-
-
-def question_dto(session, q):
-    links = session.scalars(
-        select(QuestionConcept)
-        .where(QuestionConcept.question_id == q.id)
-        .order_by(QuestionConcept.concept_id)
-    ).all()
-    ev = session.scalars(
-        select(QuestionEvidence)
-        .where(QuestionEvidence.question_id == q.id)
-        .order_by(QuestionEvidence.chunk_id)
-    ).all()
-    return {
-        "id": q.id,
-        "question_type": q.question_type,
-        "concept_ids": [x.concept_id for x in links],
-        "concept_version_ids": [x.concept_version_id for x in links],
-        "prompt": q.prompt,
-        "options": q.options,
-        "difficulty": q.difficulty,
-        "evidence": [evidence_dto(session, x.chunk_id) for x in ev],
-    }
 
 
 def get_grading_question(session, user_id, question_id):
@@ -182,10 +141,16 @@ def set_dto(session, s, task_gateway=None):
         if task_gateway and rows
         else {}
     )
+    questions = question_dtos(
+        session,
+        session.scalars(select(Question).where(Question.id.in_([row.question_id for row in rows])))
+        if rows
+        else [],
+    )
     items = [
         {
             "ordinal": x.ordinal,
-            "question": question_dto(session, session.get(Question, x.question_id)),
+            "question": questions[x.question_id],
             "latest_attempt": attempts.get(x.question_id, {}).get("latest_attempt"),
         }
         for x in rows
@@ -251,42 +216,54 @@ def create_set(
         raise ApiError(422, "INVALID_REQUEST", "Concept versions must be unique.")
 
     def action(session):
+        if data["task_id"]:
+            # Shared order: goal -> plan -> task -> material -> version. Never
+            # hold material while waiting for the owning plan/task locks.
+            ctx.task_gateway.validate_question_task(
+                session, user, data["task_id"], data["unit_id"], vids, count=data["count"]
+            )
         unit = session.get(MaterialUnit, data["unit_id"])
-        material = session.get(Material, unit.material_id) if unit else None
-        if not material or material.user_id != user:
+        if unit is None:
             missing()
-        if material.archived or material.processing_status != "ready":
-            raise ApiError(422, "MATERIAL_NOT_READY", "Material is not available for generation.")
+        _generation_material(session, user, unit.material_id)
         # A plan task pins the exact confirmed versions it was planned with, so a
         # later re-confirmation must not block its practice set. Without a task,
         # only the current confirmed version may be used.
-        versions = [_version(session, user, v, not data["task_id"]) for v in vids]
+        versions = [get_confirmed_version(session, user, v) for v in vids]
         concepts = [session.get(Concept, v.concept_id) for v in versions]
         if any(c.unit_id != unit.id for c in concepts) or len({c.id for c in concepts}) != len(concepts):
             raise ApiError(422, "INVALID_CONCEPT_VERSION", "Versions must belong to the selected unit.")
-        if data["task_id"]:
-            ctx.task_gateway.validate_question_task(
-                session, user, data["task_id"], unit.id, vids, count=data["count"]
-            )
+        versions = [
+            _generation_version_for_acceptance(session, version.id, current=not data["task_id"])
+            for version in versions
+        ]
         ctx.providers.ensure_model(data["model_id"])
         rid = uid()
         payload = {k: data[k] for k in ("unit_id", "task_id", "concept_version_ids", "count", "difficulty")}
         payload["concept_version_ids"] = sorted(vids)
-        matching_jobs = [
-            prior
-            for prior in session.scalars(
-                select(Job)
-                .where(
-                    Job.user_id == user,
-                    Job.kind == "questions",
-                    Job.status.in_(["queued", "running", "outcome_unknown"]),
+        try:
+            matching_jobs = [
+                prior
+                for prior in session.scalars(
+                    select(Job)
+                    .where(
+                        Job.user_id == user,
+                        Job.kind == "questions",
+                        Job.status.in_(["queued", "running", "outcome_unknown"]),
+                    )
+                    # Current read under RR, without waiting while holding
+                    # material/version locks a Job-first worker may need.
+                    .with_for_update(nowait=True)
+                    .execution_options(populate_existing=True)
                 )
-                # InnoDB REPEATABLE READ must see a just-completed unknown job,
-                # even if earlier material/version reads established a snapshot.
-                .with_for_update()
-            )
-            if prior.request_payload == payload
-        ]
+                if prior.request_payload == payload
+            ]
+        except OperationalError as exc:
+            if getattr(exc.orig, "args", ())[:1] == (3572,):
+                raise ApiError(
+                    409, "JOB_IN_PROGRESS", "A question job is being updated; try again."
+                ) from None
+            raise
         if any(prior.status in ("queued", "running") for prior in matching_jobs):
             raise ApiError(409, "JOB_IN_PROGRESS", "A matching job is already active.")
         # A successor does not establish whether the original call was billed.
@@ -318,9 +295,16 @@ def create_set(
         session.flush()
         for v in versions:
             session.add(QuestionSetConcept(set_id=rid, concept_id=v.concept_id, concept_version_id=v.id))
-        return 202, _job_body(job)
+        return 202, accepted(job)
 
-    return idempotent(ctx, user, "createQuestionSet", idempotency_key, _request_data(request, data), action)
+    return idempotent(
+        ctx,
+        user,
+        "createQuestionSet",
+        idempotency_key,
+        request_envelope(request, data, query_as_dict=True),
+        action,
+    )
 
 
 @router.get("/question-sets")
@@ -376,11 +360,12 @@ def create_explanation(
     data = body.model_dump(mode="json")
 
     def action(session):
-        v = _version(session, user, data["concept_version_id"])
+        v = get_confirmed_version(session, user, data["concept_version_id"])
         c = session.get(Concept, v.concept_id)
-        m = session.get(Material, c.material_id)
-        if m.archived or m.processing_status != "ready":
-            raise ApiError(422, "MATERIAL_NOT_READY", "Material is not available for generation.")
+        m = _generation_material(session, user, c.material_id)
+        # Historical confirmed explanations are allowed; only new standalone
+        # question sets require the concept's current version.
+        v = _generation_version_for_acceptance(session, v.id)
         ctx.providers.ensure_model(data["model_id"])
         rid = uid()
         payload = {"concept_version_id": v.id, "explanation_language": data["explanation_language"]}
@@ -417,10 +402,15 @@ def create_explanation(
                 created_at=utcnow(),
             )
         )
-        return 202, _job_body(job)
+        return 202, accepted(job)
 
     return idempotent(
-        ctx, user, "createLearningExplanation", idempotency_key, _request_data(request, data), action
+        ctx,
+        user,
+        "createLearningExplanation",
+        idempotency_key,
+        request_envelope(request, data, query_as_dict=True),
+        action,
     )
 
 
@@ -433,7 +423,7 @@ def list_explanations(
 ):
     ctx, user = get_context(request), get_user(request)
     with ctx.db.transaction() as session:
-        _version(session, user, str(concept_version_id))
+        get_confirmed_version(session, user, str(concept_version_id))
         stmt = (
             select(LearningExplanation)
             .where(
@@ -497,7 +487,7 @@ class QuestionsHandler:
             raise ValueError("stale job")
         s = session.get(QuestionSet, job.resource_id)
         links = session.scalars(select(QuestionSetConcept).where(QuestionSetConcept.set_id == s.id)).all()
-        return {
+        payload = {
             "instructions": (
                 'Return one JSON object, without a Markdown fence, with exactly the key "questions". '
                 "Its value must contain exactly count questions in the desired order. Each question is an "
@@ -521,6 +511,12 @@ class QuestionsHandler:
                 _generation_version(session, session.get(ConceptVersion, x.concept_version_id)) for x in links
             ],
         }
+        if wants_ai_context(self.ctx, job.model_id):
+            payload["ai_context"] = {
+                "unit_id": s.unit_id,
+                "context": study_context(session, [x.concept_version_id for x in links]),
+            }
+        return payload
 
     def persist(self, session, job, output):
         if not self.is_current(session, job):
@@ -682,7 +678,7 @@ class ExplanationHandler:
         if not self.is_current(session, job):
             raise ValueError("stale job")
         e = session.get(LearningExplanation, job.resource_id)
-        return {
+        payload = {
             "instructions": (
                 "Return one JSON object without a Markdown fence, with exactly these keys: title, "
                 "explanation_markdown, evidence. title is a nonempty string of at most 200 characters; "
@@ -697,6 +693,9 @@ class ExplanationHandler:
             "language": e.explanation_language,
             "version": _generation_version(session, session.get(ConceptVersion, e.concept_version_id)),
         }
+        if wants_ai_context(self.ctx, job.model_id):
+            payload["ai_context"] = {"context": study_context(session, [e.concept_version_id])}
+        return payload
 
     def persist(self, session, job, output):
         if not self.is_current(session, job):
