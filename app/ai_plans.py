@@ -30,7 +30,9 @@ from .ai_context import study_context
 
 log = logging.getLogger(__name__)
 
-PLAN_TIMEOUT_SECONDS = 20
+# The frontend gives POST /study-plans 15 s; a sleeping AI server host (Render
+# cold start ~10 s) must not push plan creation past that, so fall back early.
+PLAN_TIMEOUT_SECONDS = 8
 MAX_TARGET = 20
 MAX_CONCEPTS = 100
 MAX_CHUNKS = 200
