@@ -206,7 +206,9 @@ def create_app(
 
     # Publish only canonical operations actually mounted by the integrated server.
     source = json.loads(
-        (Path(__file__).resolve().parents[1] / "contracts" / "openapi-1.4.0-monthly-subscription.json").read_text(encoding="utf-8")
+        (
+            Path(__file__).resolve().parents[1] / "contracts" / "openapi-1.4.0-monthly-subscription.json"
+        ).read_text(encoding="utf-8")
     )
     source = copy.deepcopy(source)
     source["info"]["title"] = "Team4 Learning Backend — implemented contract"
