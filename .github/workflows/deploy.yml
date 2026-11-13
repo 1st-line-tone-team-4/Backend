@@ -1,10 +1,9 @@
 name: Deploy backend
 
-# Every push to main is tested and then deployed to the team server over SSH.
-# Required repository secrets:
-#   DEPLOY_HOST     server address (e.g. 52.78.115.112)
-#   DEPLOY_USER     SSH user (ubuntu)
-#   DEPLOY_SSH_KEY  private key that can log in as DEPLOY_USER
+# CI/CD: every push to main is tested and then deployed to the team server
+# over SSH (also runnable by hand via workflow_dispatch).
+# Repository variables: DEPLOY_HOST (server address), DEPLOY_USER (ssh user)
+# Repository secret:    DEPLOY_SSH_KEY (private key for DEPLOY_USER)
 on:
   push:
     branches: [main]
@@ -37,23 +36,22 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: production
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Check deploy secrets
         env:
-          HOST: ${{ secrets.DEPLOY_HOST }}
+          HOST: ${{ vars.DEPLOY_HOST }}
           KEY: ${{ secrets.DEPLOY_SSH_KEY }}
         run: |
           if [ -z "$HOST" ] || [ -z "$KEY" ]; then
-            echo "::error::Set DEPLOY_HOST, DEPLOY_USER and DEPLOY_SSH_KEY repository secrets."
+            echo "::error::Set the DEPLOY_HOST variable and the DEPLOY_SSH_KEY secret."
             exit 1
           fi
       - name: Configure SSH
         env:
-          HOST: ${{ secrets.DEPLOY_HOST }}
+          HOST: ${{ vars.DEPLOY_HOST }}
           KEY: ${{ secrets.DEPLOY_SSH_KEY }}
         run: |
           install -m 700 -d ~/.ssh
@@ -62,8 +60,8 @@ jobs:
           ssh-keyscan -T 15 "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
       - name: Ship and deploy
         env:
-          HOST: ${{ secrets.DEPLOY_HOST }}
-          USER_NAME: ${{ secrets.DEPLOY_USER || 'ubuntu' }}
+          HOST: ${{ vars.DEPLOY_HOST }}
+          USER_NAME: ${{ vars.DEPLOY_USER || 'ubuntu' }}
         run: |
           git bundle create backend.bundle HEAD
           SSH="ssh -i $HOME/.ssh/deploy_key -o BatchMode=yes"
@@ -71,7 +69,7 @@ jobs:
           $SSH "$USER_NAME@$HOST" "bash /tmp/remote_deploy.sh /tmp/backend.bundle $GITHUB_SHA"
       - name: Public health check
         env:
-          HOST: ${{ secrets.DEPLOY_HOST }}
+          HOST: ${{ vars.DEPLOY_HOST }}
         run: |
           curl -fsS -m 10 "http://$HOST:8000/health"
           curl -fsS -m 10 "http://$HOST:8000/openapi.json" | python3 -c "import sys, json; print(json.load(sys.stdin)['info']['version'])"
