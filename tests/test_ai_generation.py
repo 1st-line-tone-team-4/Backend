@@ -14,6 +14,7 @@ import pytest
 
 import tests.test_ab_e2e as ab_e2e
 from app.ai_generation import (
+    AI_SERVER_MANAGED_KEY,
     AiServerProvider,
     CompositeProviders,
     GeminiTeachbackClient,
@@ -49,12 +50,13 @@ KINDS = {
 class FakeAiServer:
     """Minimal stand-in for the AI server: validates IDs, echoes grounded evidence."""
 
-    def __init__(self, calls=None):
+    def __init__(self, calls=None, expected_key=KEY):
         self.calls = [] if calls is None else calls
+        self.expected_key = expected_key
 
     def __call__(self, request):
         assert request.headers["X-AI-API-Key"] == SERVER_KEY
-        assert request.headers.get("X-AI-Key") == KEY
+        assert request.headers.get("X-AI-Key") == self.expected_key
         body = json.loads(request.content)
         path = request.url.path
         if path in KINDS:
@@ -501,12 +503,72 @@ def test_missing_ai_context_or_oversized_request_fails_before_dispatch():
 def test_service_key_comes_from_server_settings_not_requests():
     assert provider().service_key(GEMINI) == KEY
     assert not hasattr(provider(), "validate_key")
+    # Without a backend GEMINI_API_KEY the AI server's own key is used.
     unconfigured = AiServerProvider("https://ai.test", SERVER_KEY, (GEMINI,), profile="production")
-    assert unconfigured.service_key(GEMINI) is None
-    assert unconfigured.list_models()[0]["available"] is False
-    with pytest.raises(ApiError) as missing:
-        unconfigured.ensure_model(GEMINI)
-    assert (missing.value.status, missing.value.code) == (503, "AI_NOT_CONFIGURED")
+    assert unconfigured.service_key(GEMINI) == AI_SERVER_MANAGED_KEY
+    assert unconfigured.list_models()[0]["available"] is True
+    unconfigured.ensure_model(GEMINI)
+
+
+def test_ai_server_owns_key_and_model_list_when_backend_has_none():
+    seen = []
+
+    def ai_server(request):
+        seen.append(request)
+        assert request.headers["X-AI-API-Key"] == SERVER_KEY
+        assert "X-AI-Key" not in request.headers
+        if request.url.path == "/internal/models":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": GEMINI, "provider": "gemini", "label": GEMINI, "available": True},
+                        {"id": "gemini:off", "provider": "gemini", "label": "off", "available": False},
+                        {"id": "not-a-gemini-id", "provider": "x", "label": "x", "available": True},
+                    ]
+                },
+            )
+        return FakeAiServer(expected_key=None)(request)
+
+    managed = AiServerProvider(
+        "http://ai.test", SERVER_KEY, None, transport=httpx.MockTransport(ai_server), profile="test"
+    )
+    assert [(m["id"], m["available"]) for m in managed.list_models()] == [
+        (GEMINI, True),
+        ("gemini:off", False),
+    ]
+    assert managed.handles_model(GEMINI) and not managed.handles_model("not-a-gemini-id")
+    key = managed.service_key(GEMINI)
+    assert key == AI_SERVER_MANAGED_KEY
+    payload, _, _ = explanation_payload()
+    managed.preflight(GEMINI, "learning_explanation", payload)
+    assert managed.generate(GEMINI, key, "learning_explanation", payload)
+    # The model list is cached, not fetched for every check.
+    assert sum(r.url.path == "/internal/models" for r in seen) == 1
+    # Text teach-back still calls Gemini from the backend and needs its key.
+    with pytest.raises(ProviderFailure) as missing:
+        managed.preflight(GEMINI, "message", {"instructions": "x"})
+    assert (missing.value.code, missing.value.retryable) == ("CREDENTIAL_UNAVAILABLE", True)
+
+
+def test_unreachable_ai_server_lists_no_models():
+    def down(request):
+        raise httpx.ConnectError("down")
+
+    managed = AiServerProvider(
+        "http://ai.test", SERVER_KEY, None, transport=httpx.MockTransport(down), profile="test"
+    )
+    assert managed.list_models() == []
+    with pytest.raises(ApiError) as unavailable:
+        managed.ensure_model(GEMINI)
+    assert unavailable.value.code == "MODEL_UNAVAILABLE"
+
+
+def test_ai_service_url_alone_enables_ai_server_models():
+    settings = Settings(profile="test", ai_service_url="http://ai.test", ai_service_api_key=SERVER_KEY)
+    ai = AiServerProvider.from_settings(settings)
+    assert ai is not None and ai.models is None
+    assert AiServerProvider.from_settings(Settings(profile="test")) is None
 
 
 @pytest.mark.parametrize(
