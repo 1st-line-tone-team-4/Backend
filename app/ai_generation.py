@@ -374,8 +374,10 @@ AI_SERVER_MANAGED_KEY = "ai-server-managed-provider-key"
 
 
 class AiServerProvider:
-    MODEL_LIST_TIMEOUT_SECONDS = 5
+    # Generous enough for a sleeping AI server host (e.g. Render free tier) to wake up.
+    MODEL_LIST_TIMEOUT_SECONDS = 20
     MODEL_LIST_TTL_SECONDS = 60
+    MODEL_LIST_RETRY_SECONDS = 10
     MAX_REQUEST_BYTES = 2 * 1024 * 1024 - 1024  # AI server non-extract body limit is 2 MiB
     MAX_RESPONSE_BYTES = 8 * 1024 * 1024
     MAX_ERROR_BYTES = 64 * 1024
@@ -456,13 +458,13 @@ class AiServerProvider:
         if self.models is not None:
             return self.models
         now = time.monotonic()
-        if self._remote_checked is None or now - self._remote_checked >= self.MODEL_LIST_TTL_SECONDS:
-            self._remote_checked = now
+        if self._remote_checked is None or now >= self._remote_checked:
             try:
                 self._remote_models, self._remote_available = self._fetch_remote_models()
+                self._remote_checked = now + self.MODEL_LIST_TTL_SECONDS
             except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
-                # Keep the last good list; an unreachable AI server adds nothing.
-                pass
+                # Keep the last good list and ask again soon.
+                self._remote_checked = now + self.MODEL_LIST_RETRY_SECONDS
         return self._remote_models
 
     def handles_model(self, model_id):
