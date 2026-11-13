@@ -14,6 +14,7 @@ from app.a_gateway import (
     task_concepts,
     task_concepts_many,
 )
+from app.ai_plans import ai_plan_specs
 from app.core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow
 from app.models import (
     Concept,
@@ -174,6 +175,26 @@ def _ensure_not_busy(db, owner, tasks):
         raise
 
 
+def _local_specs(rows, today, days):
+    """Even spread of solve(5)/teach_back(1)/review(1) per concept until the exam."""
+    pairs = [
+        (concept, version, kind)
+        for concept, version, _unit in rows
+        for kind in ("solve", "teach_back", "review")
+    ]
+    span = max(1, days)
+    return [
+        (
+            today + timedelta(days=index * span // len(pairs)),
+            kind,
+            5 if kind == "solve" else 1,
+            concept,
+            version,
+        )
+        for index, (concept, version, kind) in enumerate(pairs)
+    ]
+
+
 def _new_task(db, plan, ordinal, due, kind, target, concepts):
     task = PlanTask(
         id=uid(),
@@ -260,21 +281,19 @@ def create_study_plan(
         db.flush()
         for ordinal, mid in enumerate(mids, 1):
             db.add(StudyPlanMaterial(study_plan_id=plan.id, material_id=mid, ordinal=ordinal))
-        specs = [
-            (concept, version, kind)
-            for concept, version, unit in rows
-            for kind in ("solve", "teach_back", "review")
-        ]
-        today, span = today_seoul(), max(1, days)
-        for index, (concept, version, kind) in enumerate(specs):
-            due = today + timedelta(days=index * span // len(specs))
+        today = today_seoul()
+        # The team AI server schedules the plan; the local spread is the fallback.
+        specs = ai_plan_specs(ctx, db, rows, materials, exam_date=goal.exam_date, today=today)
+        if specs is None or len(specs) > MAX_TASKS:
+            specs = _local_specs(rows, today, days)
+        for index, (due, kind, target, concept, version) in enumerate(specs):
             _new_task(
                 db,
                 plan,
                 index + 1,
                 due,
                 kind,
-                5 if kind == "solve" else 1,
+                target,
                 [{"concept_id": concept.id, "concept_version_id": version.id}],
             )
         db.flush()
