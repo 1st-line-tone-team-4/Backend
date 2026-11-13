@@ -54,6 +54,7 @@ class ProviderRegistry:
             raise ValueError("Custom provider transports are test-only")
         if type(max_completion_tokens) is not int or not 1 <= max_completion_tokens <= 16384:
             raise ValueError("Completion token cap must be an integer between 1 and 16384")
+        self.settings = settings
         self.transport = transport
         if usage_observer is not None and not callable(usage_observer):
             raise ValueError("Usage observer must be callable")
