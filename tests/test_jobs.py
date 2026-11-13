@@ -37,6 +37,11 @@ class FakeProvider:
         self.calls = 0
         self.failure = None
         self.on_call = None
+        # Contract 1.4.0: stands in for the server-managed provider secret.
+        self.key = KEY
+
+    def service_key(self, model):
+        return self.key
 
     def ensure_model(self, model):
         if model != "openai:test-model":
@@ -125,7 +130,6 @@ def enqueue(ctx, model_id="openai:test-model"):
             resource_id=ctx.resource,
             payload={"material_id": ctx.resource},
             model_id=model_id,
-            ai_key=KEY,
         )
         session.get(Material, ctx.resource).latest_job_id = job.id
         return job.id
@@ -158,13 +162,26 @@ def test_success_and_no_plaintext_in_database_or_vault(context):
     assert context.providers.calls == 1
 
 
-def test_expired_credential_fails_before_call(context):
+def test_missing_service_key_fails_before_call(context):
     job_id = enqueue(context)
-    context.credentials.delete(read_job(context, job_id).credential_ref)
+    assert read_job(context, job_id).credential_ref is None
+    context.providers.key = None
     context.jobs.run_once()
     job = read_job(context, job_id)
-    assert (job.status, job.error_code, job.retryable) == ("failed", "CREDENTIAL_EXPIRED", True)
+    assert (job.status, job.error_code, job.retryable) == ("failed", "CREDENTIAL_UNAVAILABLE", True)
     assert context.providers.calls == 0
+
+
+def test_legacy_byok_credential_is_discarded_and_service_key_used(context):
+    job_id = enqueue(context)
+    legacy = context.credentials.put("legacy-user-key")
+    with context.db.transaction() as session:
+        session.get(Job, job_id).credential_ref = legacy
+    assert context.jobs.run_once()
+    job = read_job(context, job_id)
+    assert job.status == "succeeded" and job.credential_ref is None
+    assert context.credentials.get(legacy) is None
+    assert context.providers.calls == 1  # FakeProvider asserts the service key was used.
 
 
 @pytest.mark.parametrize("code", ["PROVIDER_AUTH", "PROVIDER_RATE_LIMIT", "PROVIDER_UNAVAILABLE"])
@@ -180,14 +197,12 @@ def test_definite_rejection_retries_only_explicitly_and_max_three(context, code)
         if attempt < 3:
             with context.db.transaction() as session:
                 context.jobs.retry(
-                    session, job_id=job_id, user_id=context.owner, model_id="openai:test-model", ai_key=KEY
+                    session, job_id=job_id, user_id=context.owner, model_id="openai:test-model"
                 )
     assert context.providers.calls == 3
     with pytest.raises(ApiError, match="cannot be retried"):
         with context.db.transaction() as session:
-            context.jobs.retry(
-                session, job_id=job_id, user_id=context.owner, model_id="openai:test-model", ai_key=KEY
-            )
+            context.jobs.retry(session, job_id=job_id, user_id=context.owner, model_id="openai:test-model")
 
 
 def test_uncertain_timeout_never_blind_retry_and_requires_cost_consent(context):
@@ -204,8 +219,7 @@ def test_uncertain_timeout_never_blind_retry_and_requires_cost_consent(context):
                     job_id=job_id,
                     user_id=context.owner,
                     model_id="openai:test-model",
-                    ai_key=KEY,
-                    acknowledge_possible_duplicate_cost=acknowledgement,
+                    acknowledge_possible_duplicate_execution=acknowledgement,
                 )
     with context.db.transaction() as session:
         successor = context.jobs.restart(
@@ -213,8 +227,7 @@ def test_uncertain_timeout_never_blind_retry_and_requires_cost_consent(context):
             job_id=job_id,
             user_id=context.owner,
             model_id="openai:test-model",
-            ai_key=KEY,
-            acknowledge_possible_duplicate_cost=True,
+            acknowledge_possible_duplicate_execution=True,
         )
         new_id = successor.id
     assert new_id != job_id
@@ -227,8 +240,7 @@ def test_uncertain_timeout_never_blind_retry_and_requires_cost_consent(context):
                 job_id=job_id,
                 user_id=context.owner,
                 model_id="openai:test-model",
-                ai_key=KEY,
-                acknowledge_possible_duplicate_cost=True,
+                acknowledge_possible_duplicate_execution=True,
             )
 
 
@@ -293,8 +305,7 @@ def test_old_worker_cannot_commit_after_recovery_and_successor(context):
                 job_id=job_id,
                 user_id=context.owner,
                 model_id="openai:test-model",
-                ai_key=KEY,
-                acknowledge_possible_duplicate_cost=True,
+                acknowledge_possible_duplicate_execution=True,
             )
             new_id = new.id
         release.set()
@@ -419,8 +430,7 @@ def test_two_concurrent_restarts_have_one_successor(context):
                     job_id=job_id,
                     user_id=context.owner,
                     model_id="openai:test-model",
-                    ai_key=KEY,
-                    acknowledge_possible_duplicate_cost=True,
+                    acknowledge_possible_duplicate_execution=True,
                 )
                 return new.id
         except ApiError as exc:
@@ -437,7 +447,7 @@ def test_two_concurrent_restarts_have_one_successor(context):
 @pytest.mark.parametrize("value", [1, "true", False, None])
 def test_restart_rejects_coerced_consent(value):
     with pytest.raises(ValidationError):
-        RestartBody(model_id="openai:test-model", acknowledge_possible_duplicate_cost=value)
+        RestartBody(model_id="openai:test-model", acknowledge_possible_duplicate_execution=value)
 
 
 def test_provider_disabled_by_default_and_fixed_allowlist():
@@ -455,15 +465,13 @@ def test_provider_disabled_by_default_and_fixed_allowlist():
             check_key(key)
 
 
-def test_openai_non_generating_validation_and_multimodal_fixed_endpoint():
+def test_openai_service_key_multimodal_fixed_endpoint():
     calls = []
 
     def respond(request):
         calls.append(request)
         assert request.url.host == "api.openai.com"
         assert request.headers["authorization"] == "Bearer " + KEY
-        if request.method == "GET":
-            return httpx.Response(200, json={"id": "test-model"})
         body = json.loads(request.content)
         assert body["messages"][1]["content"][1]["image_url"]["url"] == "data:image/png;base64,YQ=="
         return httpx.Response(
@@ -471,18 +479,33 @@ def test_openai_non_generating_validation_and_multimodal_fixed_endpoint():
         )
 
     registry = ProviderRegistry(
-        Settings(profile="test", enabled_models=("openai:test-model",)),
+        Settings(profile="test", enabled_models=("openai:test-model",), openai_api_key=KEY),
         transport=httpx.MockTransport(respond),
     )
-    assert registry.validate_key("openai:test-model", KEY)["valid"] is True
-    assert len(calls) == 1 and calls[0].method == "GET"
+    assert registry.service_key("openai:test-model") == KEY
+    assert not hasattr(registry, "validate_key")
     assert registry.generate(
         "openai:test-model",
         KEY,
         "analysis",
         {"image_data_url": "data:image/png;base64,YQ==", "instructions": "JSON"},
     ) == {"ok": True}
-    assert calls[1].url.path == "/v1/chat/completions"
+    assert len(calls) == 1 and calls[0].url.path == "/v1/chat/completions"
+
+
+def test_service_key_controls_model_availability_and_configuration_error():
+    configured = ProviderRegistry(
+        Settings(
+            profile="production",
+            enabled_models=("openai:test-model", "anthropic:claude-haiku-5-5"),
+            openai_api_key=KEY,
+        )
+    )
+    assert [m["available"] for m in configured.list_models()] == [True, False]
+    configured.ensure_model("openai:test-model")
+    with pytest.raises(ApiError) as err:
+        configured.ensure_model("anthropic:claude-haiku-5-5")
+    assert (err.value.status, err.value.code) == (503, "AI_NOT_CONFIGURED")
 
 
 @pytest.mark.parametrize(
@@ -563,7 +586,7 @@ ANTHROPIC_MODEL = "anthropic:claude-haiku-5-5"
 
 def anthropic_registry(respond, **kwargs):
     return ProviderRegistry(
-        Settings(profile="test", enabled_models=(ANTHROPIC_MODEL,)),
+        Settings(profile="test", enabled_models=(ANTHROPIC_MODEL,), anthropic_api_key=KEY),
         transport=httpx.MockTransport(respond),
         **kwargs,
     )
@@ -585,7 +608,7 @@ def anthropic_response(text='{"page_count":1}', *, stop_reason="end_turn"):
     }
 
 
-def test_anthropic_non_generating_validation_and_multimodal_request():
+def test_anthropic_service_key_multimodal_request():
     calls, usage = [], []
     image_buffer = BytesIO()
     with Image.new("RGB", (1, 1)) as image:
@@ -598,9 +621,6 @@ def test_anthropic_non_generating_validation_and_multimodal_request():
         assert request.headers["x-api-key"] == KEY
         assert "authorization" not in request.headers
         assert request.headers["anthropic-version"] == "2026-10-21"
-        if request.method == "GET":
-            assert request.url.path == "/v1/models/claude-haiku-5-5"
-            return httpx.Response(200, json={"id": "claude-haiku-5-5", "type": "model"})
         assert request.url.path == "/v1/messages"
         body = json.loads(request.content)
         assert body["model"] == "claude-haiku-5-5" and body["max_tokens"] == 256
@@ -619,12 +639,10 @@ def test_anthropic_non_generating_validation_and_multimodal_request():
     assert registry.list_models() == [
         {"id": ANTHROPIC_MODEL, "provider": "anthropic", "label": "claude-haiku-5-5", "available": True}
     ]
-    assert registry.validate_key(ANTHROPIC_MODEL, KEY) == {"valid": True, "model_id": ANTHROPIC_MODEL}
-    assert len(calls) == 1 and not usage
     assert registry.generate(
         ANTHROPIC_MODEL, KEY, "analysis", {"image_data_url": "data:image/png;base64," + image_data}
     ) == {"page_count": 1}
-    assert len(calls) == 2
+    assert len(calls) == 1
     assert usage == [
         {
             "provider": "anthropic",

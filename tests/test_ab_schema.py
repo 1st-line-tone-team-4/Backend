@@ -106,12 +106,12 @@ def test_single_registry_matches_every_canonical_table_and_constraint():
 
 def test_mysql_chain_covers_full_schema_without_recreating_task_history():
     files = sorted((ROOT / "migrations").glob("[0-9][0-9][0-9]_mysql_*.sql"))
-    assert [path.name[:3] for path in files] == ["000", "001", "002", "003", "004", "005"]
+    assert [path.name[:3] for path in files] == ["000", "001", "002", "003", "004", "005", "006"]
     sql = "\n".join(path.read_text(encoding="utf-8") for path in files)
     created = re.findall(r"CREATE TABLE (\w+)\s*\(", sql)
     assert len(created) == len(set(created)) == 35
     assert set(created) == Base.metadata.tables.keys()
-    migration = files[-1].read_text(encoding="utf-8")
+    migration = files[5].read_text(encoding="utf-8")
     assert "INSERT INTO ab_005_preflight SELECT 0 FROM plan_tasks LIMIT 1" in migration
     assert migration.index("FROM plan_tasks LIMIT 1") < migration.index("CREATE TABLE exam_goals")
     assert "DROP TABLE plan_tasks" not in migration and "CREATE TABLE plan_tasks" not in migration

@@ -28,7 +28,7 @@ from .providers import ProviderFailure
 
 router = APIRouter()
 TERMINAL = ("succeeded", "failed", "outcome_unknown")
-SAFE_FAILURES = {"CREDENTIAL_EXPIRED", "PROVIDER_AUTH", "PROVIDER_RATE_LIMIT", "PROVIDER_UNAVAILABLE"}
+SAFE_FAILURES = {"CREDENTIAL_UNAVAILABLE", "PROVIDER_AUTH", "PROVIDER_RATE_LIMIT", "PROVIDER_UNAVAILABLE"}
 
 
 def job_dto(job):
@@ -353,7 +353,9 @@ class JobService:
                     job.credential_ref = None
                 key = self.ctx.providers.service_key(model_id)
                 if not key:
-                    raise ProviderFailure("PROVIDER_UNAVAILABLE")
+                    # Contract 1.4.0: the service-managed provider credential is
+                    # missing; operators can configure it and the learner retries.
+                    raise ProviderFailure("CREDENTIAL_UNAVAILABLE", retryable=True)
                 self.ctx.providers.ensure_model(model_id)
                 preflight = getattr(self.ctx.providers, "preflight", None)
                 if callable(preflight):

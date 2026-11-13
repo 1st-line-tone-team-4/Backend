@@ -23,7 +23,8 @@ def registry_for(model, calls):
         return httpx.Response(200, json=response_for(model))
 
     return ProviderRegistry(
-        Settings(profile="test", enabled_models=(model,)), transport=httpx.MockTransport(respond)
+        Settings(profile="test", enabled_models=(model,), openai_api_key=KEY, anthropic_api_key=KEY),
+        transport=httpx.MockTransport(respond),
     )
 
 
@@ -121,7 +122,8 @@ def test_growing_failed_message_history_rejected_before_dispatch_without_losing_
         return httpx.Response(400, json={"error": "synthetic test rejection"})
 
     env.ctx.providers = ProviderRegistry(
-        Settings(profile="test", enabled_models=(model,)), transport=httpx.MockTransport(reject_request)
+        Settings(profile="test", enabled_models=(model,), openai_api_key=KEY, anthropic_api_key=KEY),
+        transport=httpx.MockTransport(reject_request),
     )
     content = "한" * 12000
     overflow_job = None

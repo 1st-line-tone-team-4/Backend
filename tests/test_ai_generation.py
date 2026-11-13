@@ -59,8 +59,6 @@ class FakeAiServer:
         path = request.url.path
         if path in KINDS:
             self.calls.append((KINDS[path], body))
-        if path == "/internal/models/validate-key":
-            return httpx.Response(200, json={"valid": True, "model_id": body["model_id"]})
         if path == "/internal/materials/analyze":
             chunk = body["chunks"][0]
             v4(chunk["id"]), v4(chunk["material_id"])
@@ -189,6 +187,7 @@ def provider(fake=None, gemini=None):
         transport=httpx.MockTransport(fake or FakeAiServer()),
         profile="test",
         teachback=teachback,
+        provider_key=KEY,
     )
 
 
@@ -499,18 +498,15 @@ def test_missing_ai_context_or_oversized_request_fails_before_dispatch():
     assert oversized.value.code == "PROVIDER_UNAVAILABLE"
 
 
-def test_key_validation_never_generates():
-    assert provider().validate_key(GEMINI, KEY) == {"valid": True, "model_id": GEMINI}
-
-    def rejected(request):
-        return httpx.Response(422, json={"error": {"code": "PROVIDER_AUTH", "message": "x"}})
-
-    with pytest.raises(ApiError) as auth:
-        provider(rejected).validate_key(GEMINI, KEY)
-    assert (auth.value.status, auth.value.code) == (422, "PROVIDER_AUTH")
-    with pytest.raises(ApiError) as down:
-        provider(lambda request: httpx.Response(503, json={})).validate_key(GEMINI, KEY)
-    assert (down.value.status, down.value.code) == (503, "KEY_VALIDATION_UNAVAILABLE")
+def test_service_key_comes_from_server_settings_not_requests():
+    assert provider().service_key(GEMINI) == KEY
+    assert not hasattr(provider(), "validate_key")
+    unconfigured = AiServerProvider("https://ai.test", SERVER_KEY, (GEMINI,), profile="production")
+    assert unconfigured.service_key(GEMINI) is None
+    assert unconfigured.list_models()[0]["available"] is False
+    with pytest.raises(ApiError) as missing:
+        unconfigured.ensure_model(GEMINI)
+    assert (missing.value.status, missing.value.code) == (503, "AI_NOT_CONFIGURED")
 
 
 @pytest.mark.parametrize(

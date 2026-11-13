@@ -199,7 +199,6 @@ def grade_env(tmp_path):
 def headers(*, other=False, key=None):
     return {
         "Authorization": "Bearer test-other-token" if other else "Bearer test-owner-token",
-        "X-AI-Key": "test-transient-key",
         "Idempotency-Key": key or uid(),
     }
 
@@ -342,7 +341,7 @@ def test_retry_unknown_restart_and_new_attempt_fencing(grade_env):
     assert retry.status_code == 202 and retry.json()["data"]["job"]["attempt_no"] == 2
     fx.provider.fail_next = ProviderFailure("TIMEOUT_UNKNOWN", outcome_unknown=True)
     assert fx.ctx.jobs.run_once()
-    assert submit(fx).json()["error"]["code"] == "POSSIBLE_DUPLICATE_COST"
+    assert submit(fx).json()["error"]["code"] == "DUPLICATE_EXECUTION_ACK_REQUIRED"
     assert (
         fx.client.post(
             f"/v1/jobs/{job.id}/retry", headers=headers(), json={"model_id": fx.provider.model_id}
@@ -354,14 +353,14 @@ def test_retry_unknown_restart_and_new_attempt_fencing(grade_env):
         fx.client.post(
             restart_url,
             headers=headers(),
-            json={"model_id": fx.provider.model_id, "acknowledge_possible_duplicate_cost": False},
+            json={"model_id": fx.provider.model_id, "acknowledge_possible_duplicate_execution": False},
         ).status_code
         == 422
     )
     restarted = fx.client.post(
         restart_url,
         headers=headers(),
-        json={"model_id": fx.provider.model_id, "acknowledge_possible_duplicate_cost": True},
+        json={"model_id": fx.provider.model_id, "acknowledge_possible_duplicate_execution": True},
     )
     assert restarted.status_code == 202
     assert restarted.json()["data"]["job"]["previous_job_id"] == job.id
@@ -372,7 +371,7 @@ def test_retry_unknown_restart_and_new_attempt_fencing(grade_env):
         fx.client.post(
             restart_url,
             headers=headers(),
-            json={"model_id": fx.provider.model_id, "acknowledge_possible_duplicate_cost": True},
+            json={"model_id": fx.provider.model_id, "acknowledge_possible_duplicate_execution": True},
         ).status_code
         == 409
     )
@@ -432,15 +431,15 @@ def test_multiple_choice_is_ai_graded_but_cannot_override_trusted_verdict(grade_
     assert len(fx.provider.calls) == 1
 
 
-def test_expired_credential_fails_without_provider_call_and_can_retry(grade_env):
+def test_missing_service_key_fails_without_provider_call_and_can_retry(grade_env):
     fx = grade_env
     response = submit(fx)
     assert response.status_code == 202
     job_id = response.json()["data"]["job"]["id"]
-    with fx.ctx.db.transaction() as db:
-        fx.ctx.credentials.delete(db.get(Job, job_id).credential_ref)
+    fx.provider.service_key = lambda model_id: None  # Operator has not configured the key.
     job, attempt = run_grade(fx, response)
-    assert (job.error_code, job.retryable, attempt.status) == ("CREDENTIAL_EXPIRED", True, "failed")
+    del fx.provider.service_key
+    assert (job.error_code, job.retryable, attempt.status) == ("CREDENTIAL_UNAVAILABLE", True, "failed")
     assert fx.provider.calls == []
     retry = fx.client.post(
         f"/v1/jobs/{job_id}/retry", headers=headers(), json={"model_id": fx.provider.model_id}

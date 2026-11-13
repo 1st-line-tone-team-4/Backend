@@ -20,7 +20,9 @@ from tests.ab_support import KEY, MODEL, ab_http_application
 
 
 CONTRACT = json.loads(
-    (Path(__file__).resolve().parents[1] / "contracts/openapi-1.3.0.json").read_text("utf-8")
+    (Path(__file__).resolve().parents[1] / "contracts/openapi-1.4.0-monthly-subscription.json").read_text(
+        "utf-8"
+    )
 )
 
 
@@ -42,9 +44,7 @@ def validate(response, path, method="get"):
 
 
 def post(fixture, path, body, *, key=None, headers=None):
-    return fixture.client.post(
-        path, json=body, headers={"Idempotency-Key": key or uid(), "X-AI-Key": KEY, **(headers or {})}
-    )
+    return fixture.client.post(path, json=body, headers={"Idempotency-Key": key or uid(), **(headers or {})})
 
 
 def run_job(fixture, accepted):

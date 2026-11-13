@@ -38,7 +38,9 @@ from app.providers import ProviderFailure
 from tests.support import test_application as make_application
 
 CONTRACT = json.loads(
-    (Path(__file__).resolve().parents[1] / "contracts/openapi-1.3.0.json").read_text(encoding="utf-8")
+    (Path(__file__).resolve().parents[1] / "contracts/openapi-1.4.0-monthly-subscription.json").read_text(
+        encoding="utf-8"
+    )
 )
 MODEL = "test:grounded"
 KEY = "test-transient-key"
@@ -196,9 +198,7 @@ def report_output(env, *, status="explained"):
 
 
 def post(env, path, body, *, idem=None, headers=None):
-    return env.client.post(
-        path, json=body, headers={"Idempotency-Key": idem or uid(), "X-AI-Key": KEY, **(headers or {})}
-    )
+    return env.client.post(path, json=body, headers={"Idempotency-Key": idem or uid(), **(headers or {})})
 
 
 def create(env, *, task=True, **extra):
@@ -335,12 +335,14 @@ def test_retry_reuses_message_then_unknown_requires_explicit_restart(env):
     assert post(env, f"/v1/jobs/{jid}/retry", {"model_id": MODEL}).status_code == 409
     assert (
         post(
-            env, f"/v1/jobs/{jid}/restart", {"model_id": MODEL, "acknowledge_possible_duplicate_cost": False}
+            env,
+            f"/v1/jobs/{jid}/restart",
+            {"model_id": MODEL, "acknowledge_possible_duplicate_execution": False},
         ).status_code
         == 422
     )
     restarted = post(
-        env, f"/v1/jobs/{jid}/restart", {"model_id": MODEL, "acknowledge_possible_duplicate_cost": True}
+        env, f"/v1/jobs/{jid}/restart", {"model_id": MODEL, "acknowledge_possible_duplicate_execution": True}
     )
     assert restarted.status_code == 202, restarted.text
     successor = restarted.json()["data"]["job"]["id"]
@@ -367,14 +369,16 @@ def test_invalid_evidence_atomic_failure_and_report_restart(env):
         assert db.get(TeachbackSession, sid).status == "report_pending"
         assert db.get(PlanTask, env.ids["task"]).status == "pending"
     restarted = post(
-        env, f"/v1/jobs/{jid}/restart", {"model_id": MODEL, "acknowledge_possible_duplicate_cost": True}
+        env, f"/v1/jobs/{jid}/restart", {"model_id": MODEL, "acknowledge_possible_duplicate_execution": True}
     )
     assert restarted.status_code == 202, restarted.text
     env.ctx.jobs.run_once()
     assert env.client.get(f"/v1/teachback-sessions/{sid}/report").status_code == 200
     assert (
         post(
-            env, f"/v1/jobs/{jid}/restart", {"model_id": MODEL, "acknowledge_possible_duplicate_cost": True}
+            env,
+            f"/v1/jobs/{jid}/restart",
+            {"model_id": MODEL, "acknowledge_possible_duplicate_execution": True},
         ).status_code
         == 409
     )
@@ -491,17 +495,16 @@ def test_uploaded_analyzed_confirmed_api_version_without_quote_works(env):
     assert response.json()["data"]["items"][0]["evidence"][0]["material_id"] == material_id
 
 
-def test_credential_ttl_no_call_and_abandon_fences_retry(env):
+def test_missing_service_key_no_call_and_abandon_fences_retry(env):
     sid = create(env, task=False)
     jid = send(env, sid)
-    ref = job(env, jid)["credential_ref"]
-    with env.ctx.credentials._connect() as vault:
-        vault.execute("UPDATE credentials SET expires_at=0 WHERE ref=?", (ref,))
+    assert job(env, jid)["credential_ref"] is None
+    env.provider.service_key = lambda model_id: None  # Operator has not configured the key.
     env.ctx.jobs.run_once()
+    del env.provider.service_key
     assert env.calls == []
-    assert job(env, jid)["error_code"] == "CREDENTIAL_EXPIRED"
+    assert job(env, jid)["error_code"] == "CREDENTIAL_UNAVAILABLE"
     assert job(env, jid)["retryable"]
-    assert env.ctx.credentials.get(ref) is None
     assert env.client.patch(f"/v1/teachback-sessions/{sid}", json={"status": "abandoned"}).status_code == 200
     response = post(env, f"/v1/jobs/{jid}/retry", {"model_id": MODEL})
     assert response.status_code == 409 and response.json()["error"]["code"] == "STALE_JOB"
@@ -538,16 +541,8 @@ def test_paid_report_can_finish_after_goal_pause_without_progress(env):
     assert denied.status_code == 409 and denied.json()["error"]["code"] == "STALE_TASK"
 
 
-def test_credential_in_message_rejected_and_echoed_output_not_saved(env):
+def test_echoed_service_key_output_not_saved(env):
     sid = create(env, task=False)
-    response = post(
-        env,
-        f"/v1/teachback-sessions/{sid}/messages",
-        {"content": "my key " + KEY, "input_mode": "text", "model_id": MODEL},
-    )
-    assert response.status_code == 422
-    with env.ctx.db.transaction() as db:
-        assert db.scalar(select(func.count(SessionMessage.id))) == 0
     jid = send(env, sid)
     env.outputs = [{"assistant_content": "Echo " + KEY}]
     env.ctx.jobs.run_once()

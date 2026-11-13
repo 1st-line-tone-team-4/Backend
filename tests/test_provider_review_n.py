@@ -9,7 +9,7 @@ import httpx
 import pytest
 from PIL import Image, ImageFile
 
-from app.core import ApiError, Settings
+from app.core import Settings
 from app.providers import ProviderFailure, ProviderRegistry
 
 
@@ -37,14 +37,14 @@ def response_for(model_id):
 
 def registry_for(model_id, respond, **kwargs):
     return ProviderRegistry(
-        Settings(profile="test", enabled_models=(model_id,)),
+        Settings(profile="test", enabled_models=(model_id,), openai_api_key=KEY, anthropic_api_key=KEY),
         transport=httpx.MockTransport(respond),
         **kwargs,
     )
 
 
 @pytest.mark.parametrize("model_id", MODELS)
-def test_generation_and_key_validation_have_distinct_total_and_http_budgets(monkeypatch, model_id):
+def test_generation_has_fixed_total_and_http_budget(monkeypatch, model_id):
     deadlines, requests = [], []
     original_wait_for = asyncio.wait_for
 
@@ -60,12 +60,13 @@ def test_generation_and_key_validation_have_distinct_total_and_http_budgets(monk
     registry = registry_for(model_id, respond)
     assert registry.GENERATION_TIMEOUT_SECONDS == 300
     assert registry.TOTAL_TIMEOUT_SECONDS == 300
-    assert registry.KEY_VALIDATION_TIMEOUT_SECONDS == 15
+    # Contract 1.4.0 removed the non-generating key validation call.
+    assert not hasattr(registry, "KEY_VALIDATION_TIMEOUT_SECONDS")
+    assert not hasattr(registry, "validate_key")
     assert registry.generate(model_id, KEY, "analysis", {}) == {"ok": True}
-    assert registry.validate_key(model_id, KEY)["valid"]
-    assert deadlines == [300, 15]
-    assert [request.method for request in requests] == ["POST", "GET"]
-    assert [request.extensions["timeout"]["read"] for request in requests] == [300, 15]
+    assert deadlines == [300]
+    assert [request.method for request in requests] == ["POST"]
+    assert [request.extensions["timeout"]["read"] for request in requests] == [300]
     assert all(request.extensions["timeout"]["connect"] == 10 for request in requests)
 
 
@@ -83,27 +84,6 @@ def test_generation_compatibility_timeout_cannot_extend_fixed_budget(monkeypatch
     registry.TOTAL_TIMEOUT_SECONDS = 600
     registry.generate(model_id, KEY, "analysis", {})
     assert observed == [300]
-
-
-def test_key_validation_deadline_includes_response_body_without_generation():
-    calls = []
-
-    class SlowBody(httpx.AsyncByteStream):
-        async def __aiter__(self):
-            yield b"{"
-            await asyncio.sleep(1)
-            yield b"}"
-
-    def respond(request):
-        calls.append(request.method)
-        return httpx.Response(200, stream=SlowBody())
-
-    registry = registry_for(MODELS[1], respond)
-    registry.KEY_VALIDATION_TIMEOUT_SECONDS = 0.01
-    with pytest.raises(ApiError) as error:
-        registry.validate_key(MODELS[1], KEY)
-    assert error.value.code == "KEY_VALIDATION_UNAVAILABLE"
-    assert calls == ["GET"]
 
 
 @pytest.mark.parametrize("model_id", MODELS)
@@ -219,7 +199,7 @@ def test_malformed_image_fails_locally_without_output_error_or_network(model_id,
     assert calls == []
 
 
-def test_anthropic_supported_api_key_header_is_used_for_both_operations():
+def test_anthropic_supported_api_key_header_is_used_for_generation():
     requests = []
     model_id = MODELS[1]
 
@@ -228,8 +208,8 @@ def test_anthropic_supported_api_key_header_is_used_for_both_operations():
         return httpx.Response(200, json=response_for(model_id))
 
     registry = registry_for(model_id, respond)
-    registry.validate_key(model_id, KEY)
     registry.generate(model_id, KEY, "analysis", {})
+    assert len(requests) == 1
     assert all(request.headers["x-api-key"] == KEY for request in requests)
     assert all(request.headers["anthropic-version"] == "2026-10-21" for request in requests)
     assert all("authorization" not in request.headers for request in requests)

@@ -374,11 +374,14 @@ class AiServerProvider:
     MIN_QUESTION_COUNT = 5
     ANALYSIS_MAX_CALLS = 12
 
-    def __init__(self, base_url, api_key, models, *, transport=None, profile=None, teachback=None):
+    def __init__(
+        self, base_url, api_key, models, *, transport=None, profile=None, teachback=None, provider_key=""
+    ):
         self.base_url = validate_service_config(base_url, api_key, transport=transport, profile=profile)
         self.api_key = api_key
         self.profile = profile
-        self.provider_key = ""
+        # Service-owned GEMINI_API_KEY; never supplied by learners.
+        self.provider_key = provider_key or ""
         self.transport = transport
         self.models = tuple(models)
         if not self.models or len(self.models) > 100 or len(set(self.models)) != len(self.models):
@@ -399,9 +402,13 @@ class AiServerProvider:
             return None
         if not getattr(settings, "ai_service_url", ""):
             raise ValueError("AI_SERVICE_MODELS requires AI_SERVICE_URL")
-        instance = cls(settings.ai_service_url, settings.ai_service_api_key, models, profile=settings.profile)
-        instance.provider_key = getattr(settings, "gemini_api_key", "") or ""
-        return instance
+        return cls(
+            settings.ai_service_url,
+            settings.ai_service_api_key,
+            models,
+            profile=settings.profile,
+            provider_key=getattr(settings, "gemini_api_key", ""),
+        )
 
     def handles_model(self, model_id):
         return model_id in self.models

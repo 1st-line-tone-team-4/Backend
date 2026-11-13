@@ -274,7 +274,9 @@ def test_material_and_concept_response_match_contract(env):
 
     ctx, user, other, mid, jid = env
     handler = AnalysisHandler(ctx)
-    contract = json.loads(Path("contracts/openapi-1.3.0.json").read_text(encoding="utf-8"))
+    contract = json.loads(
+        Path("contracts/openapi-1.4.0-monthly-subscription.json").read_text(encoding="utf-8")
+    )
 
     def check(name, value):
         schema = {"$ref": "#/components/schemas/" + name, "components": contract["components"]}

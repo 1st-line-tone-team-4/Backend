@@ -164,7 +164,7 @@ def test_close_can_retry_lock_unlink_after_descriptor_is_closed(tmp_path, monkey
 def test_reservation_failure_never_dispatches_or_reserves_again(tmp_path, monkeypatch):
     ledger = Ledger(tmp_path / "budget.json")
     ledger.write()
-    provider = BudgetProvider(ledger)
+    provider = BudgetProvider(ledger, "synthetic-only-token")
     provider.actual = Mock()
 
     def fail_replace(*_):
@@ -186,7 +186,7 @@ def test_reservation_failure_never_dispatches_or_reserves_again(tmp_path, monkey
 def test_unknown_outcome_blocks_retries_in_current_and_later_run(tmp_path):
     path = tmp_path / "budget.json"
     ledger = Ledger(path)
-    provider = BudgetProvider(ledger)
+    provider = BudgetProvider(ledger, "synthetic-only-token")
     provider.actual = Mock()
     provider.actual.generate.side_effect = ProviderFailure("TIMEOUT_UNKNOWN", outcome_unknown=True)
     try:

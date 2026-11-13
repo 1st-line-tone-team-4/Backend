@@ -23,7 +23,9 @@ from tests.support import test_application as make_test_application
 from tests.support import seed_task_reference
 
 CONTRACT = json.loads(
-    (Path(__file__).resolve().parents[1] / "contracts/openapi-1.3.0.json").read_text(encoding="utf-8")
+    (Path(__file__).resolve().parents[1] / "contracts/openapi-1.4.0-monthly-subscription.json").read_text(
+        encoding="utf-8"
+    )
 )
 OWNER = {"Authorization": "Bearer test-owner-token"}
 OTHER = {"Authorization": "Bearer test-other-token"}
@@ -79,9 +81,7 @@ def live(tmp_path):
 
 
 def post(live, path, body, *, idem=None, headers=None):
-    return live.client.post(
-        path, json=body, headers={"Idempotency-Key": idem or uid(), "X-AI-Key": KEY, **(headers or {})}
-    )
+    return live.client.post(path, json=body, headers={"Idempotency-Key": idem or uid(), **(headers or {})})
 
 
 def upload(live):
@@ -277,14 +277,14 @@ def test_failure_retry_unknown_restart_and_atomic_invalid_output(live):
         post(
             live,
             f"/v1/jobs/{job['id']}/restart",
-            {"model_id": MODEL, "acknowledge_possible_duplicate_cost": False},
+            {"model_id": MODEL, "acknowledge_possible_duplicate_execution": False},
         ).status_code
         == 422
     )
     restart = post(
         live,
         f"/v1/jobs/{job['id']}/restart",
-        {"model_id": MODEL, "acknowledge_possible_duplicate_cost": True},
+        {"model_id": MODEL, "acknowledge_possible_duplicate_execution": True},
     )
     assert restart.status_code == 202, restart.text
     validate(restart, "/jobs/{jobId}/restart", "post")
@@ -311,9 +311,11 @@ def test_auth_validation_and_model_boundaries(live):
     validate(result, "/materials", "post")
     models = live.client.get("/v1/ai/models")
     validate(models, "/ai/models")
-    response = post(live, "/v1/ai/validate-key", {"model_id": MODEL})
-    assert response.status_code == 200
-    validate(response, "/ai/validate-key", "post")
+    # Contract 1.4.0 removed key validation; provider keys are service-managed.
+    assert post(live, "/v1/ai/validate-key", {"model_id": MODEL}).status_code in (404, 405)
+    capabilities = live.client.get("/v1/billing/capabilities")
+    validate(capabilities, "/billing/capabilities")
+    assert capabilities.json()["data"]["mode"] == "monthly_subscription"
     assert not live.provider.calls
     assert live.client.get("/v1/materials", params={"cursor": "garbage"}).status_code == 422
 
@@ -364,11 +366,13 @@ def test_unknown_cost_ack_survives_every_successor_state(live, successor_status)
     live.provider.fail_next = ProviderFailure("TIMEOUT_UNKNOWN", outcome_unknown=True)
     assert live.ctx.jobs.run_once()
     blocked = post(live, "/v1/question-sets", data)
-    assert blocked.status_code == 409 and blocked.json()["error"]["code"] == "POSSIBLE_DUPLICATE_COST"
+    assert (
+        blocked.status_code == 409 and blocked.json()["error"]["code"] == "DUPLICATE_EXECUTION_ACK_REQUIRED"
+    )
     restarted = post(
         live,
         f"/v1/jobs/{job_id}/restart",
-        {"model_id": MODEL, "acknowledge_possible_duplicate_cost": True},
+        {"model_id": MODEL, "acknowledge_possible_duplicate_execution": True},
     )
     assert restarted.status_code == 202, restarted.text
     successor_id = restarted.json()["data"]["job"]["id"]
@@ -387,13 +391,15 @@ def test_unknown_cost_ack_survives_every_successor_state(live, successor_status)
     again = post(live, "/v1/question-sets", data)
     active = successor_status in ("queued", "running")
     assert again.status_code == 409, again.text
-    assert again.json()["error"]["code"] == ("JOB_IN_PROGRESS" if active else "POSSIBLE_DUPLICATE_COST")
+    assert again.json()["error"]["code"] == (
+        "JOB_IN_PROGRESS" if active else "DUPLICATE_EXECUTION_ACK_REQUIRED"
+    )
     assert len(live.provider.calls) == calls_before
     if successor_status == "outcome_unknown":
         chained = post(
             live,
             f"/v1/jobs/{successor_id}/restart",
-            {"model_id": MODEL, "acknowledge_possible_duplicate_cost": True},
+            {"model_id": MODEL, "acknowledge_possible_duplicate_execution": True},
         )
         assert chained.status_code == 202, chained.text
         assert live.ctx.jobs.run_once()
@@ -401,8 +407,8 @@ def test_unknown_cost_ack_survives_every_successor_state(live, successor_status)
             assert s.get(Job, chained.json()["data"]["job"]["id"]).status == "succeeded"
         after_chain = post(live, "/v1/question-sets", data)
         assert after_chain.status_code == 409
-        assert after_chain.json()["error"]["code"] == "POSSIBLE_DUPLICATE_COST"
-    acknowledged = post(live, "/v1/question-sets", {**data, "acknowledge_possible_duplicate_cost": True})
+        assert after_chain.json()["error"]["code"] == "DUPLICATE_EXECUTION_ACK_REQUIRED"
+    acknowledged = post(live, "/v1/question-sets", {**data, "acknowledge_possible_duplicate_execution": True})
     assert acknowledged.status_code == (409 if active else 202), acknowledged.text
 
 

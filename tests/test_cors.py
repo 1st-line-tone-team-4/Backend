@@ -39,14 +39,25 @@ def test_configured_origin_gets_preflight_and_response_headers(tmp_path):
         headers={
             "Origin": FRONTEND,
             "Access-Control-Request-Method": "POST",
-            "Access-Control-Request-Headers": "authorization,content-type,idempotency-key,x-ai-key",
+            "Access-Control-Request-Headers": "authorization,content-type,idempotency-key",
         },
     )
     assert preflight.status_code == 200
     assert preflight.headers["access-control-allow-origin"] == FRONTEND
     allowed = preflight.headers["access-control-allow-headers"].lower()
-    for header in ("authorization", "content-type", "idempotency-key", "x-ai-key"):
+    for header in ("authorization", "content-type", "idempotency-key"):
         assert header in allowed
+    # Contract 1.4.0 removed the learner-supplied X-AI-Key header.
+    assert "x-ai-key" not in allowed
+    legacy = client.options(
+        "/v1/materials",
+        headers={
+            "Origin": FRONTEND,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "x-ai-key",
+        },
+    )
+    assert legacy.status_code == 400
     assert "access-control-allow-credentials" not in preflight.headers
 
     response = client.get("/v1/me", headers={"Origin": FRONTEND})

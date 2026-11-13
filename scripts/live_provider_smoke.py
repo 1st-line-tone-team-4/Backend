@@ -74,7 +74,6 @@ def main(argv=None):
     key = getpass("OpenAI API key (hidden; process memory only): ")
     started = time.monotonic()
     try:
-        registry.validate_key(args.model, key)  # Model metadata GET, not a generation.
         result = registry.generate(args.model, key, "analysis", PAYLOAD)
         encoded = json.dumps(result)
         valid = (

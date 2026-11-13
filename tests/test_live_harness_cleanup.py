@@ -27,7 +27,7 @@ def test_execute_failure_clears_memory_and_disposes_database(tmp_path, monkeypat
             raise KeyboardInterrupt()
         return {"valid": True}
 
-    monkeypatch.setattr(live, "BudgetProvider", lambda _: SimpleNamespace(validate_key=validate))
+    monkeypatch.setattr(live, "BudgetProvider", lambda *_: SimpleNamespace(ensure_model=validate))
     client = MagicMock()
     client.headers = {}
     client.__enter__.return_value = client
@@ -62,7 +62,7 @@ def test_execute_failure_clears_memory_and_disposes_database(tmp_path, monkeypat
     while trace is not None:
         if trace.tb_frame.f_code.co_name in {"execute", "post"}:
             frames.append(trace.tb_frame)
-            assert trace.tb_frame.f_locals["key"] is None
+            assert trace.tb_frame.f_locals.get("key") is None
         trace = trace.tb_next
     assert frames
     # On Windows this also checks that dispose released pooled SQLite handles.
@@ -82,7 +82,7 @@ def test_execute_dispose_failure_still_clears_memory(tmp_path, monkeypatch):
         credentials.append(ctx.credentials)
         raise ValueError("SYNTHETIC_VALIDATION_FAILURE")
 
-    monkeypatch.setattr(live, "BudgetProvider", lambda _: SimpleNamespace(validate_key=validate))
+    monkeypatch.setattr(live, "BudgetProvider", lambda *_: SimpleNamespace(ensure_model=validate))
     with pytest.raises(RuntimeError, match="SYNTHETIC_DISPOSE_FAILURE"):
         live.execute(TOKEN, object(), tmp_path)
     dispose.assert_called_once_with()

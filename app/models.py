@@ -121,7 +121,7 @@ class Job(Base):
         CheckConstraint("fencing_token >= 0"),
         CheckConstraint("status = 'failed' OR retryable = FALSE"),
         CheckConstraint(
-            "error_code IS NULL OR error_code IN ('CREDENTIAL_EXPIRED', 'PROVIDER_AUTH', "
+            "error_code IS NULL OR error_code IN ('CREDENTIAL_UNAVAILABLE', 'PROVIDER_AUTH', "
             "'PROVIDER_RATE_LIMIT', 'PROVIDER_UNAVAILABLE', 'INVALID_OUTPUT', 'TIMEOUT_UNKNOWN', "
             "'INTERNAL_ERROR')",
             name="ck_ai_jobs_error_code",

@@ -8379,14 +8379,14 @@
       "classification": "confirmed_planning",
       "decision": "크레딧 기능 폐지. 현재 API/DTO/DB에 잔액·차감·환불 계약 없음.",
       "source": "사용자 확인 2026-10-31 12:42:43 UTC: 크레딧 폐지 논의되었어. 지워.",
-      "impact": "이전 credits/credit_ledger는 폐기 이력으로만 남김. 사용자 AI 키 입력 제공자 실제 비용과 재시작 비용 동의, 구독 가격 미정 정책은 유지."
+      "impact": "이전 credits/credit_ledger는 폐기 이력으로만 남김. AI 제공자 비용은 월 구독으로 서비스가 부담하며(byok 결정 참고) 재시작은 중복 AI 실행 동의만 요구한다. 구독 가격 미정 정책은 유지."
     },
     {
       "id": "learning-explanation-separation",
       "classification": "backend_recommendation",
       "decision": "개념 요약과 Teach-back에서 분리한 버전 고정 비동기 자습 설명 및 이력 조회",
       "reason": "사용자 요청: 강의자료를 바탕으로 혼자 학습하는 설명은 요약/세션과 별도 결과여야 함",
-      "impact": "POST/GET learning-explanations 및 상세 GET, 기존 사용자 AI 키 입력/job 복구 계약 재사용; 열람만으로 계획 완료 처리하지 않음"
+      "impact": "POST/GET learning-explanations 및 상세 GET, 기존 job 복구 계약 재사용(AI 제공자 키는 서비스 관리); 열람만으로 계획 완료 처리하지 않음"
     },
     {
       "id": "today-display-and-public-score",

@@ -38,7 +38,9 @@ from language_learning_api.routers import exam_goals, study_plans
 from tests.support import FixtureAuth
 
 CONTRACT = json.loads(
-    (Path(__file__).resolve().parents[1] / "contracts/openapi-1.3.0.json").read_text("utf-8")
+    (Path(__file__).resolve().parents[1] / "contracts/openapi-1.4.0-monthly-subscription.json").read_text(
+        "utf-8"
+    )
 )
 OWNER = {"Authorization": "Bearer test-owner-token"}
 OTHER = {"Authorization": "Bearer test-other-token"}
@@ -558,7 +560,7 @@ def test_real_b_generation_reads_canonical_plan_without_completing(tmp_path):
                 "difficulty": "easy",
                 "model_id": "test:grounded",
             }
-            generated = post(fixture, "/v1/question-sets", body, headers={"X-AI-Key": "test-transient-key"})
+            generated = post(fixture, "/v1/question-sets", body)
             assert generated.status_code == 202, generated.text
             # Acceptance is fenced against archive, but already accepted work
             # must still finish using its immutable pinned content.
@@ -637,7 +639,7 @@ def test_generation_acceptance_refreshes_material_after_stale_reads(tmp_path, mo
                 }
                 operation = "createLearningExplanation"
             key = uid()
-            rejected = post(fixture, url, body, key=key, headers={"X-AI-Key": "test-transient-key"})
+            rejected = post(fixture, url, body, key=key)
             assert rejected.status_code == 422, rejected.text
             assert rejected.json()["error"]["code"] == "MATERIAL_NOT_READY"
             assert fixture.provider.calls == []
@@ -679,7 +681,7 @@ def test_generation_preserves_old_task_pins_and_explanation_versions(tmp_path):
                 "difficulty": "easy",
                 "model_id": "test:grounded",
             }
-            standalone = post(fixture, "/v1/question-sets", body, headers={"X-AI-Key": "test-transient-key"})
+            standalone = post(fixture, "/v1/question-sets", body)
             assert (
                 standalone.status_code == 422
                 and standalone.json()["error"]["code"] == "CONCEPT_NOT_CONFIRMED"
@@ -688,7 +690,6 @@ def test_generation_preserves_old_task_pins_and_explanation_versions(tmp_path):
                 fixture,
                 "/v1/question-sets",
                 {**body, "task_id": created["tasks"][0]["id"]},
-                headers={"X-AI-Key": "test-transient-key"},
             )
             assert pinned.status_code == 202, pinned.text
             historical = post(
@@ -699,7 +700,6 @@ def test_generation_preserves_old_task_pins_and_explanation_versions(tmp_path):
                     "explanation_language": "en",
                     "model_id": "test:grounded",
                 },
-                headers={"X-AI-Key": "test-transient-key"},
             )
             assert historical.status_code == 202, historical.text
     finally:
@@ -735,7 +735,6 @@ def test_generation_job_nowait_contention_rolls_back_acceptance(tmp_path):
                     "model_id": "test:grounded",
                 },
                 key=key,
-                headers={"X-AI-Key": "test-transient-key"},
             )
             assert rejected.status_code == 409 and rejected.json()["error"]["code"] == "JOB_IN_PROGRESS"
             with fixture.ctx.db.transaction() as db:
@@ -783,7 +782,6 @@ def assert_mysql_generation_acceptance_after_lock_wait(fixture):
                             "/v1/question-sets",
                             body,
                             key=key,
-                            headers={"X-AI-Key": "test-transient-key"},
                         )
                     )
                 except BaseException as exc:
@@ -860,9 +858,7 @@ def assert_mysql_generation_acceptance_after_lock_wait(fixture):
         key = uid()
         with fixture.ctx.db.transaction() as worker:
             worker.scalar(select(Job).where(Job.id == queued_id).with_for_update())
-            rejected = post(
-                fixture, "/v1/question-sets", body, key=key, headers={"X-AI-Key": "test-transient-key"}
-            )
+            rejected = post(fixture, "/v1/question-sets", body, key=key)
             assert rejected.status_code == 409, rejected.text
             assert rejected.json()["error"]["code"] == "JOB_IN_PROGRESS"
             worker.scalar(

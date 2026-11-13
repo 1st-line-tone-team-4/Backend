@@ -9,7 +9,6 @@ def test_live_harness_default_never_requests_key_or_connects(monkeypatch, capsys
 
     monkeypatch.setattr("scripts.live_provider_smoke.getpass", forbidden)
     monkeypatch.setattr("scripts.live_provider_smoke.ProviderRegistry.generate", forbidden)
-    monkeypatch.setattr("scripts.live_provider_smoke.ProviderRegistry.validate_key", forbidden)
     assert (
         main(
             [

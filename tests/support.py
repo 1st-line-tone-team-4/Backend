@@ -68,9 +68,9 @@ class FixtureProvider:
         if model_id != self.model_id:
             raise ApiError(422, "MODEL_UNAVAILABLE", "Model is not configured.")
 
-    def validate_key(self, model_id, key):
-        self.ensure_model(model_id)
-        return {"valid": key == "test-transient-key", "model_id": model_id}
+    def service_key(self, model_id):
+        # Contract 1.4.0: provider keys are service-managed, never client-supplied.
+        return "test-transient-key"
 
     def generate(self, model_id, key, kind, payload):
         self.ensure_model(model_id)
