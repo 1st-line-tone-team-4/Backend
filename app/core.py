@@ -44,6 +44,10 @@ class Settings:
     ai_service_api_key: str = ""
     # gemini:<model> IDs generated through the AI server; empty keeps recognition only.
     ai_service_models: tuple = ()
+    # Optional provider-qualified model (e.g. openai:<model>) for text teach-back
+    # replies, the one AI step the AI server has no endpoint for. Empty keeps the
+    # backend's Gemini stopgap. Uses the matching *_API_KEY above.
+    teachback_text_model: str = ""
     # Browser origins allowed to call the API cross-origin. Empty: same-origin only.
     cors_allowed_origins: tuple = ()
 

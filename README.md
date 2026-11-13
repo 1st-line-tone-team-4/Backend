@@ -52,6 +52,7 @@ foreach ($migrationFile in $migrationFiles) {
 | `ENABLED_MODELS` | 승인한 `openai:<model>` / `anthropic:<model>` ID의 쉼표 구분 목록; 비어 있으면 활성 모델 없음 |
 | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | 서비스가 Secret Manager에서 공급받는 제공자 키. 요청·DB·로그·Git에 넣지 않음. `ENABLED_MODELS`의 OpenAI/Anthropic 모델은 해당 키가 필요합니다. AI 서버 경유 모델은 AI 서버가 자기 `GEMINI_API_KEY`를 쓰므로(`AI_USE_SERVER_TEXT_KEY=true`) 백엔드 `GEMINI_API_KEY`는 선택이며, 설정하면 AI 서버 키 대신 전달됩니다. 단, 텍스트 Teach-back 답변은 AI 서버에 경로가 없어 백엔드 `GEMINI_API_KEY`가 있어야 합니다 |
 | `AI_SERVICE_URL`, `AI_SERVICE_API_KEY` | 선택. AI 서버(`AI` repo) 주소와 서버 간 키(AI 서버의 `AI_SERVER_API_KEY`). 설정하면 PDF/PNG/JPEG 인식을 AI 서버의 Upstage 문서 인식으로 처리하고, 비우면 기존 로컬 추출을 사용합니다. 자세한 내용은 [팀 repo 통합 안내](docs/INTEGRATION_REPOS.md) |
+| `TEACHBACK_TEXT_MODEL` | 선택. 텍스트 Teach-back 답변(AI 서버에 경로가 없는 유일한 단계)을 처리할 직접 모델(예: `openai:<model>`). 해당 제공자 키(`OPENAI_API_KEY` 등)가 필요하며, 비우면 백엔드 `GEMINI_API_KEY`로 Gemini를 호출합니다. |
 | `AI_SERVICE_MODELS` | 선택. 비우면 모델 목록을 AI 서버의 `GET /internal/models`에서 받아(60초 캐시) 분석·문제 생성·채점·학습 설명·Teach-back 리포트를 내부 API로 처리합니다. 모델 선택은 AI 서버 설정이 결정합니다. 값을 넣으면 그 `gemini:<model>` 목록으로 고정합니다. `AI_SERVICE_URL`이 필요하며 `ENABLED_MODELS`와 겹칠 수 없습니다. |
 | `CORS_ALLOWED_ORIGINS` | 선택. 프런트엔드를 API와 다른 origin에서 서비스할 때 허용할 정확한 origin의 쉼표 구분 목록(예: `https://team4.vercel.app`). 경로·`*`·끝 슬래시는 거부하며, `production`에서는 https만 허용합니다. 비우면 CORS 헤더를 보내지 않습니다(같은 origin 프록시 사용). |
 

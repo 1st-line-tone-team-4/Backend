@@ -627,3 +627,45 @@ def test_configuration_and_routing():
 def test_ai_service_models_environment_list(monkeypatch):
     monkeypatch.setenv("AI_SERVICE_MODELS", f"{GEMINI}, gemini:second ,")
     assert Settings.from_env().ai_service_models == (GEMINI, "gemini:second")
+
+
+def test_text_teachback_can_use_a_direct_openai_model_without_gemini_key():
+    from app.ai_generation import DirectTeachback
+
+    seen = []
+
+    def openai(request):
+        seen.append(request)
+        assert request.url.host == "api.openai.com"
+        assert request.headers["authorization"] == "Bearer openai-service-key"
+        body = json.loads(request.content)
+        assert body["model"] == "teach-model" and "ai_context" not in request.content.decode()
+        content = '{"assistant_content": "Why is the external force zero?"}'
+        return httpx.Response(
+            200, json={"choices": [{"finish_reason": "stop", "message": {"content": content}}]}
+        )
+
+    settings = Settings(
+        profile="test", teachback_text_model="openai:teach-model", openai_api_key="openai-service-key"
+    )
+    direct = DirectTeachback.from_settings(settings)
+    direct.registry.transport = httpx.MockTransport(openai)
+    managed = AiServerProvider(
+        "http://ai.test",
+        SERVER_KEY,
+        (GEMINI,),
+        transport=httpx.MockTransport(FakeAiServer()),
+        profile="test",
+        teachback=direct,
+    )
+    key = managed.service_key(GEMINI)
+    assert key == AI_SERVER_MANAGED_KEY
+    payload = {"instructions": "Ask one question.", "ai_context": {"context": {}}}
+    managed.preflight(GEMINI, "message", payload)
+    assert managed.generate(GEMINI, key, "message", payload) == {
+        "assistant_content": "Why is the external force zero?"
+    }
+    assert len(seen) == 1
+    with pytest.raises(ValueError):
+        DirectTeachback.from_settings(Settings(profile="test", teachback_text_model="openai:teach-model"))
+    assert DirectTeachback.from_settings(Settings(profile="test")) is None

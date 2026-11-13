@@ -430,6 +430,7 @@ class AiServerProvider:
             models or None,
             profile=settings.profile,
             provider_key=getattr(settings, "gemini_api_key", ""),
+            teachback=DirectTeachback.from_settings(settings),
         )
 
     def _fetch_remote_models(self):
@@ -539,7 +540,7 @@ class AiServerProvider:
         if kind == "message":
             # The AI server has no text teach-back reply endpoint yet, so this
             # kind still calls Gemini from the backend and needs GEMINI_API_KEY.
-            if not self.provider_key:
+            if not self.provider_key and not isinstance(self.teachback, DirectTeachback):
                 raise ProviderFailure("CREDENTIAL_UNAVAILABLE", retryable=True)
             self.teachback.preflight(model_id, payload)
         else:
@@ -549,7 +550,7 @@ class AiServerProvider:
         check_key(key)
         self.ensure_model(model_id)
         if kind == "message":
-            if key == AI_SERVER_MANAGED_KEY:
+            if key == AI_SERVER_MANAGED_KEY and not isinstance(self.teachback, DirectTeachback):
                 raise ProviderFailure("CREDENTIAL_UNAVAILABLE", retryable=True)
             return self.teachback.generate(model_id, key, payload)
         request = self._build(model_id, kind, payload)
@@ -570,6 +571,46 @@ class AiServerProvider:
             return request.mapper(result)
         except (KeyError, TypeError, ValueError, AttributeError, IndexError, RecursionError):
             raise ProviderFailure("INVALID_OUTPUT") from None
+
+
+class DirectTeachback:
+    """Text teach-back replies through a direct OpenAI/Anthropic model (TEACHBACK_TEXT_MODEL).
+
+    The AI server has no text reply endpoint, so this single job kind is served
+    by the backend's own provider adapter with a service-managed key, whatever
+    gemini:* model the learner's job carries for the other AI server steps.
+    """
+
+    def __init__(self, registry, model_id, key):
+        self.registry, self.model_id, self.key = registry, model_id, key
+
+    @classmethod
+    def from_settings(cls, settings, *, transport=None):
+        model = (getattr(settings, "teachback_text_model", "") or "").strip()
+        if not model:
+            return None
+        from dataclasses import replace
+
+        from .providers import ProviderRegistry
+
+        provider = model.split(":", 1)[0]
+        key = getattr(settings, f"{provider}_api_key", "") or ""
+        if not key:
+            raise ValueError("TEACHBACK_TEXT_MODEL requires the matching provider API key")
+        registry = ProviderRegistry(replace(settings, enabled_models=(model,)), transport=transport)
+        return cls(registry, model, key)
+
+    @staticmethod
+    def _prompt(payload):
+        if not isinstance(payload, dict):
+            raise ProviderFailure("PROVIDER_UNAVAILABLE")
+        return {k: v for k, v in payload.items() if k != "ai_context"}
+
+    def preflight(self, model_id, payload):
+        self.registry.preflight(self.model_id, "message", self._prompt(payload))
+
+    def generate(self, model_id, key, payload):
+        return self.registry.generate(self.model_id, self.key, "message", self._prompt(payload))
 
 
 class GeminiTeachbackClient:
