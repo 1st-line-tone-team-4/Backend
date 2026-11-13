@@ -197,8 +197,11 @@ class MemoryCredentials:
 
 
 class BudgetProvider:
-    def __init__(self, ledger):
+    def __init__(self, ledger, key):
         self.ledger = ledger
+        # Contract 1.4.0: the provider key is service-managed, never sent by the
+        # client. The operator's key stands in for the server secret here.
+        self.key = key
         self.actual = ProviderRegistry(
             Settings(profile="test", enabled_models=(MODEL,)),
             max_completion_tokens=OUTPUT_CAP,
@@ -211,8 +214,8 @@ class BudgetProvider:
     def ensure_model(self, model):
         return self.actual.ensure_model(model)
 
-    def validate_key(self, model, key):
-        return self.actual.validate_key(model, key)
+    def service_key(self, model):
+        return self.key
 
     def generate(self, model, key, kind, payload):
         # Small synthetic source only; body bound also rules out arbitrary document exfiltration.
@@ -246,8 +249,8 @@ def execute(key, ledger, directory):
         fixture = make_test_application(directory)
         ctx = fixture.ctx
         ctx.credentials = credentials
-        ctx.providers = BudgetProvider(ledger)
-        ctx.providers.validate_key(MODEL, key)
+        ctx.providers = BudgetProvider(ledger, key)
+        ctx.providers.ensure_model(MODEL)
         report = {
             "model": MODEL,
             "stages": [],
@@ -258,7 +261,7 @@ def execute(key, ledger, directory):
             client.headers["Authorization"] = "Bearer test-owner-token"
 
             def post(path, data):
-                response = client.post(path, json=data, headers={"Idempotency-Key": uid(), "X-AI-Key": key})
+                response = client.post(path, json=data, headers={"Idempotency-Key": uid()})
                 if response.status_code not in (201, 202):
                     raise RuntimeError(
                         "Request failed at " + path.split("/")[2] + " status=" + str(response.status_code)
@@ -358,6 +361,9 @@ def execute(key, ledger, directory):
         key = None
         credentials.items.clear()
         if ctx is not None:
+            providers = getattr(ctx, "providers", None)
+            if hasattr(providers, "key"):
+                providers.key = None
             ctx.db.engine.dispose()
 
 
@@ -385,7 +391,8 @@ def main(argv=None):
             "PROVIDER_AUTH",
             "PROVIDER_RATE_LIMIT",
             "PROVIDER_UNAVAILABLE",
-            "KEY_VALIDATION_UNAVAILABLE",
+            "AI_NOT_CONFIGURED",
+            "CREDENTIAL_UNAVAILABLE",
             "MODEL_UNAVAILABLE",
             "TIMEOUT_UNKNOWN",
             "INVALID_OUTPUT",

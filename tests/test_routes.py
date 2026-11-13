@@ -30,9 +30,15 @@ def test_published_integrated_contract_maps_to_real_routes(tmp_path):
     assert ("get", "/v1/me") in expected
     assert ("get", "/v1/today") in expected
     assert any("teachback" in path for _, path in expected)
+    # Contract 1.4.0 mounts only the read-only monthly subscription capability.
+    assert ("get", "/v1/billing/capabilities") in expected
     assert not any(
-        "billing" in path or "score-claims" in path or "publications" in path for _, path in implemented
+        ("billing" in path and path != "/v1/billing/capabilities")
+        or "score-claims" in path
+        or "publications" in path
+        for _, path in implemented
     )
+    assert not any("validate-key" in path for _, path in implemented)
     assert len(expected) == 51
     documented = json.loads(
         (Path(__file__).resolve().parents[1] / "docs/openapi-full.json").read_text("utf-8")

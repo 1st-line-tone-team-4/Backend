@@ -1,6 +1,6 @@
 # 통합 API 안내 — 현재 제공 범위
 
-이 문서는 `app.main:create_app`에 실제 등록된 **40개 경로 / 51개 작업(B24 + A27)**의 연결 안내입니다. 경로 앞에는 `/v1`을 붙입니다. 원본 전체 제안은 [contracts/openapi-1.3.0.json](../contracts/openapi-1.3.0.json)이며, 그 안의 64개 작업 중 공개·점수·결제 관련 13개는 이번 통합 서버에 등록되지 않습니다.
+이 문서는 `app.main:create_app`에 실제 등록된 **40개 경로 / 51개 작업(A+B)**의 연결 안내입니다. 경로 앞에는 `/v1`을 붙입니다. 구현된 최종 명세는 [월 구독형 OpenAPI YAML](../contracts/openapi-final-monthly-subscription.yaml)이며, 전체 계약 원본은 [월 구독형 OpenAPI JSON](../contracts/openapi-1.4.0-monthly-subscription.json)입니다. 공개·점수 API와 checkout·구독 권한 검증은 아직 구현 범위에 없습니다.
 
 실행 중인 `/docs`와 `/openapi.json`은 등록된 계약 경로만 게시합니다. 파일 형태의 [openapi-full.json](openapi-full.json), [openapi-a.json](openapi-a.json)은 배포하려는 commit에서 갱신된 snapshot인지 확인해야 합니다. 요청 body·필드 제약·응답 schema의 기준은 OpenAPI이고, 이 문서의 표는 경로 요약입니다.
 
@@ -11,7 +11,8 @@
 | 인증 | 외부 제공자의 RS256 JWT; `Authorization: Bearer <token>` |
 | 사용자 생성 | 유효한 첫 `(issuer,subject)` 인증 시 로컬 사용자 생성; 비밀번호 가입·로그인·토큰 발급 API 없음 |
 | 멱등성 | POST의 `Idempotency-Key` 16–128자; 같은 키와 다른 요청은 `409` |
-| AI 요청 | 활성 `model_id`와 요청별 `X-AI-Key`; raw key를 일반 DB/로그에 저장하지 않음 |
+| AI 요청 | 허용된 `model_id`; 제공자 키는 서버 Secret Manager에서 관리하고 클라이언트 요청에는 포함하지 않음 |
+| 구독 | `GET /billing/capabilities`; 가격·결제 연동 전 `pricing_pending`, checkout 비활성 |
 | 성공·목록 | `{data:…}` / `{data:[…],next_cursor:…}` |
 | 오류 | `{error:{code,message,request_id,details}}`; 소유자 불일치 `404`, 입력 오류 `422`, 상태 충돌 `409` |
 | 날짜·ID | Asia/Seoul 달력 날짜, UTC timestamp, UUID 문자열 |
@@ -65,7 +66,7 @@
 
 task와 연결한 문제 생성은 소유자·활성 revision·단원·정확한 고정 버전 집합·남은 목표량을 검증합니다. 문제 DTO에는 답안 키가 없고, 채점 결과는 완료된 개인 시도에서 읽습니다. 자습 설명은 별도의 불변 성공 리소스이며 task 진행·Teach-back coverage를 변경하지 않습니다.
 
-독립 학습 설명은 월 구독 방침에 따라 신규 생성에 건별 비용 동의를 요구하지 않습니다. 이전 Job이 `outcome_unknown`이어도 새 멱등키로 명시적으로 새 설명을 요청할 수 있습니다. 같은 키 replay와 활성 작업 `409`, 자동 재호출 금지는 그대로이며 BYOK 및 공통 retry/restart 계약은 별도입니다. billing API를 구현했다는 의미는 아닙니다.
+AI 생성 API는 서비스 관리 제공자 키를 사용합니다. 결과가 불확실한 Job의 restart는 `acknowledge_possible_duplicate_execution=true`를 요구합니다. 이 동의는 중복 AI 호출 가능성에 대한 것이며 사용자에게 별도 결제를 청구한다는 뜻은 아닙니다. 실제 결제와 구독 접근 권한 검증은 후속 작업입니다.
 
 ### Teach-back·기록
 
@@ -88,11 +89,11 @@ task와 연결한 문제 생성은 소유자·활성 revision·단원·정확한
 | 메서드 | 경로 |
 | --- | --- |
 | GET | `/ai/models` |
-| POST | `/ai/validate-key` |
 | GET | `/jobs/{jobId}` |
 | POST | `/jobs/{jobId}/retry`, `/jobs/{jobId}/restart` |
+| GET | `/billing/capabilities` |
 
-활성 모델 기본값은 비어 있습니다. 키 검증도 외부 provider 요청이므로 실제 키를 사용하는 점검은 별도 승인이 필요합니다. 같은 worker가 분석·문제·자습 설명·채점·메시지·리포트를 처리합니다.
+활성 모델 기본값은 비어 있습니다. 서버 설정에 provider 키가 없는 모델은 `available=false`이며 생성 요청을 거부합니다. 같은 worker가 분석·문제·자습 설명·채점·메시지·리포트를 처리합니다.
 
 ## 상태 구분
 
@@ -107,7 +108,7 @@ task와 연결한 문제 생성은 소유자·활성 revision·단원·정확한
 | 자습 설명 | `generating`, `ready`, `failed`, `outcome_unknown` |
 | Teach-back 세션 | `active`, `report_pending`, `completed`, `abandoned` |
 
-Job의 `outcome_unknown`은 provider가 실행했는지 확정할 수 없다는 뜻입니다. 자동 재요청하지 않습니다. retry는 현재 Job의 확정된 재시도 가능 실패에 한정되고, restart는 새 키와 `acknowledge_possible_duplicate_cost=true`를 요구합니다. 완료된 과거 Job으로 현재 리소스나 새 시도를 덮어쓰지 않습니다.
+Job의 `outcome_unknown`은 provider가 실행했는지 확정할 수 없다는 뜻입니다. 자동 재요청하지 않습니다. retry는 현재 Job의 확정된 재시도 가능 실패에 한정되고, restart는 `acknowledge_possible_duplicate_execution=true`를 요구합니다. 완료된 과거 Job으로 현재 리소스나 새 시도를 덮어쓰지 않습니다.
 
 ## 계약 밖의 운영 경로와 제외 범위
 

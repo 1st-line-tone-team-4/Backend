@@ -14,6 +14,7 @@ import pytest
 
 import tests.test_ab_e2e as ab_e2e
 from app.ai_generation import (
+    AI_SERVER_MANAGED_KEY,
     AiServerProvider,
     CompositeProviders,
     GeminiTeachbackClient,
@@ -49,18 +50,17 @@ KINDS = {
 class FakeAiServer:
     """Minimal stand-in for the AI server: validates IDs, echoes grounded evidence."""
 
-    def __init__(self, calls=None):
+    def __init__(self, calls=None, expected_key=KEY):
         self.calls = [] if calls is None else calls
+        self.expected_key = expected_key
 
     def __call__(self, request):
         assert request.headers["X-AI-API-Key"] == SERVER_KEY
-        assert request.headers.get("X-AI-Key") == KEY
+        assert request.headers.get("X-AI-Key") == self.expected_key
         body = json.loads(request.content)
         path = request.url.path
         if path in KINDS:
             self.calls.append((KINDS[path], body))
-        if path == "/internal/models/validate-key":
-            return httpx.Response(200, json={"valid": True, "model_id": body["model_id"]})
         if path == "/internal/materials/analyze":
             chunk = body["chunks"][0]
             v4(chunk["id"]), v4(chunk["material_id"])
@@ -189,6 +189,7 @@ def provider(fake=None, gemini=None):
         transport=httpx.MockTransport(fake or FakeAiServer()),
         profile="test",
         teachback=teachback,
+        provider_key=KEY,
     )
 
 
@@ -499,18 +500,75 @@ def test_missing_ai_context_or_oversized_request_fails_before_dispatch():
     assert oversized.value.code == "PROVIDER_UNAVAILABLE"
 
 
-def test_key_validation_never_generates():
-    assert provider().validate_key(GEMINI, KEY) == {"valid": True, "model_id": GEMINI}
+def test_service_key_comes_from_server_settings_not_requests():
+    assert provider().service_key(GEMINI) == KEY
+    assert not hasattr(provider(), "validate_key")
+    # Without a backend GEMINI_API_KEY the AI server's own key is used.
+    unconfigured = AiServerProvider("https://ai.test", SERVER_KEY, (GEMINI,), profile="production")
+    assert unconfigured.service_key(GEMINI) == AI_SERVER_MANAGED_KEY
+    assert unconfigured.list_models()[0]["available"] is True
+    unconfigured.ensure_model(GEMINI)
 
-    def rejected(request):
-        return httpx.Response(422, json={"error": {"code": "PROVIDER_AUTH", "message": "x"}})
 
-    with pytest.raises(ApiError) as auth:
-        provider(rejected).validate_key(GEMINI, KEY)
-    assert (auth.value.status, auth.value.code) == (422, "PROVIDER_AUTH")
-    with pytest.raises(ApiError) as down:
-        provider(lambda request: httpx.Response(503, json={})).validate_key(GEMINI, KEY)
-    assert (down.value.status, down.value.code) == (503, "KEY_VALIDATION_UNAVAILABLE")
+def test_ai_server_owns_key_and_model_list_when_backend_has_none():
+    seen = []
+
+    def ai_server(request):
+        seen.append(request)
+        assert request.headers["X-AI-API-Key"] == SERVER_KEY
+        assert "X-AI-Key" not in request.headers
+        if request.url.path == "/internal/models":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": GEMINI, "provider": "gemini", "label": GEMINI, "available": True},
+                        {"id": "gemini:off", "provider": "gemini", "label": "off", "available": False},
+                        {"id": "not-a-gemini-id", "provider": "x", "label": "x", "available": True},
+                    ]
+                },
+            )
+        return FakeAiServer(expected_key=None)(request)
+
+    managed = AiServerProvider(
+        "http://ai.test", SERVER_KEY, None, transport=httpx.MockTransport(ai_server), profile="test"
+    )
+    assert [(m["id"], m["available"]) for m in managed.list_models()] == [
+        (GEMINI, True),
+        ("gemini:off", False),
+    ]
+    assert managed.handles_model(GEMINI) and not managed.handles_model("not-a-gemini-id")
+    key = managed.service_key(GEMINI)
+    assert key == AI_SERVER_MANAGED_KEY
+    payload, _, _ = explanation_payload()
+    managed.preflight(GEMINI, "learning_explanation", payload)
+    assert managed.generate(GEMINI, key, "learning_explanation", payload)
+    # The model list is cached, not fetched for every check.
+    assert sum(r.url.path == "/internal/models" for r in seen) == 1
+    # Text teach-back still calls Gemini from the backend and needs its key.
+    with pytest.raises(ProviderFailure) as missing:
+        managed.preflight(GEMINI, "message", {"instructions": "x"})
+    assert (missing.value.code, missing.value.retryable) == ("CREDENTIAL_UNAVAILABLE", True)
+
+
+def test_unreachable_ai_server_lists_no_models():
+    def down(request):
+        raise httpx.ConnectError("down")
+
+    managed = AiServerProvider(
+        "http://ai.test", SERVER_KEY, None, transport=httpx.MockTransport(down), profile="test"
+    )
+    assert managed.list_models() == []
+    with pytest.raises(ApiError) as unavailable:
+        managed.ensure_model(GEMINI)
+    assert unavailable.value.code == "MODEL_UNAVAILABLE"
+
+
+def test_ai_service_url_alone_enables_ai_server_models():
+    settings = Settings(profile="test", ai_service_url="http://ai.test", ai_service_api_key=SERVER_KEY)
+    ai = AiServerProvider.from_settings(settings)
+    assert ai is not None and ai.models is None
+    assert AiServerProvider.from_settings(Settings(profile="test")) is None
 
 
 @pytest.mark.parametrize(
@@ -569,3 +627,45 @@ def test_configuration_and_routing():
 def test_ai_service_models_environment_list(monkeypatch):
     monkeypatch.setenv("AI_SERVICE_MODELS", f"{GEMINI}, gemini:second ,")
     assert Settings.from_env().ai_service_models == (GEMINI, "gemini:second")
+
+
+def test_text_teachback_can_use_a_direct_openai_model_without_gemini_key():
+    from app.ai_generation import DirectTeachback
+
+    seen = []
+
+    def openai(request):
+        seen.append(request)
+        assert request.url.host == "api.openai.com"
+        assert request.headers["authorization"] == "Bearer openai-service-key"
+        body = json.loads(request.content)
+        assert body["model"] == "teach-model" and "ai_context" not in request.content.decode()
+        content = '{"assistant_content": "Why is the external force zero?"}'
+        return httpx.Response(
+            200, json={"choices": [{"finish_reason": "stop", "message": {"content": content}}]}
+        )
+
+    settings = Settings(
+        profile="test", teachback_text_model="openai:teach-model", openai_api_key="openai-service-key"
+    )
+    direct = DirectTeachback.from_settings(settings)
+    direct.registry.transport = httpx.MockTransport(openai)
+    managed = AiServerProvider(
+        "http://ai.test",
+        SERVER_KEY,
+        (GEMINI,),
+        transport=httpx.MockTransport(FakeAiServer()),
+        profile="test",
+        teachback=direct,
+    )
+    key = managed.service_key(GEMINI)
+    assert key == AI_SERVER_MANAGED_KEY
+    payload = {"instructions": "Ask one question.", "ai_context": {"context": {}}}
+    managed.preflight(GEMINI, "message", payload)
+    assert managed.generate(GEMINI, key, "message", payload) == {
+        "assistant_content": "Why is the external force zero?"
+    }
+    assert len(seen) == 1
+    with pytest.raises(ValueError):
+        DirectTeachback.from_settings(Settings(profile="test", teachback_text_model="openai:teach-model"))
+    assert DirectTeachback.from_settings(Settings(profile="test")) is None

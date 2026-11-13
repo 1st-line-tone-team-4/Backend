@@ -12,11 +12,13 @@ Use MySQL 8.0.16+ with enforced CHECK constraints, InnoDB and UTF8MB4. Execute
 each file once, in order, stopping at the first error. Do not use a client option
 that continues after SQL errors. No automatic production runner is provided.
 
-- **New, empty database:** `000_mysql_shared_prerequisites.sql`, then 001–005.
+- **New, empty database:** `000_mysql_shared_prerequisites.sql`, then 001–006.
   000 creates canonical `users` and an empty `plan_tasks(id)` prerequisite. 005
   expands that task table in place and creates the remaining A tables.
 - **Existing B database already at 004:** apply 005 only after verifying the
-  prerequisites below. Do not rerun 000 or the B baseline.
+  prerequisites below, then 006. Do not rerun 000 or the B baseline.
+- **Existing database already at 005:** apply 006 (contract 1.4.0 renames the
+  job error code `CREDENTIAL_EXPIRED` to `CREDENTIAL_UNAVAILABLE`).
 - **Existing independent A/other database:** this chain is not a compatible
   upgrade. Inventory and reconcile its data in a separately reviewed migration.
   In particular, do not reinterpret `units`, `jobs`, `idempotency_records`, UUID
@@ -29,6 +31,7 @@ MIME/error checks and the material archive default. 005 adds normalized goals,
 plans/pins, attempts, sessions/messages, reports/items/evidence, actions and
 feedback. Publication/public-attempt/score-claim tables complete the contract's
 schema; this migration does not enable sharing, score or billing business routes.
+006 renames the BYOK-era job error code for the monthly subscription contract.
 
 ## 005 preflight and task-stub boundary
 

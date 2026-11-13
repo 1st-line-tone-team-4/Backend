@@ -2,10 +2,8 @@
 
 Models listed in ``AI_SERVICE_MODELS`` (``gemini:<model>``) are served by the AI
 server's synchronous ``/internal/*`` endpoints. OpenAI/Anthropic models keep the
-existing fixed-endpoint adapters in ``app.providers``. The public API contract
-does not change: this module maps each job kind's backend payload to the AI
-server request and maps the response back to the exact output shape the
-existing handlers already validate and persist.
+fixed-endpoint adapters in ``app.providers``. Provider credentials are loaded
+from server configuration and are never supplied by learners.
 
 - The AI server owns prompts, evidence checks and the provider SDK. It never
   reads our DB, so handlers attach ``payload["ai_context"]`` (see app.ai_context).
@@ -14,7 +12,7 @@ existing handlers already validate and persist.
 - Requests are never retried here; the job engine decides retry/restart and
   ambiguous failures become ``outcome_unknown`` (no silent duplicate cost).
 - The AI server has no text teach-back reply endpoint (it is voice-only by
-  design), so the ``message`` kind calls Gemini directly with the same BYOK key
+  design), so the ``message`` kind calls Gemini directly with the service key
   and the backend's existing teach-back prompt. Replace it once the AI server
   offers a text reply endpoint.
 """
@@ -24,6 +22,8 @@ from __future__ import annotations
 import json
 import re
 import uuid
+
+import time
 
 import httpx
 
@@ -367,61 +367,140 @@ def _generation_failure(status, content):
     return ProviderFailure("PROVIDER_UNAVAILABLE")
 
 
+# Marker credential for AI-server-routed models when the backend holds no
+# provider key: the AI server then uses its own GEMINI_API_KEY
+# (AI_USE_SERVER_TEXT_KEY=true) and no X-AI-Key header is sent.
+AI_SERVER_MANAGED_KEY = "ai-server-managed-provider-key"
+
+
 class AiServerProvider:
+    # Generous enough for a sleeping AI server host (e.g. Render free tier) to wake up.
+    MODEL_LIST_TIMEOUT_SECONDS = 20
+    MODEL_LIST_TTL_SECONDS = 60
+    MODEL_LIST_RETRY_SECONDS = 10
     MAX_REQUEST_BYTES = 2 * 1024 * 1024 - 1024  # AI server non-extract body limit is 2 MiB
     MAX_RESPONSE_BYTES = 8 * 1024 * 1024
     MAX_ERROR_BYTES = 64 * 1024
     # JobService allows 300 s per provider call; keep a margin for persistence.
     GENERATION_TIMEOUT_SECONDS = 290
-    KEY_VALIDATION_TIMEOUT_SECONDS = 20
     MIN_QUESTION_COUNT = 5
     ANALYSIS_MAX_CALLS = 12
 
-    def __init__(self, base_url, api_key, models, *, transport=None, profile=None, teachback=None):
+    def __init__(
+        self, base_url, api_key, models, *, transport=None, profile=None, teachback=None, provider_key=""
+    ):
         self.base_url = validate_service_config(base_url, api_key, transport=transport, profile=profile)
         self.api_key = api_key
+        self.profile = profile
+        # Service-owned GEMINI_API_KEY; never supplied by learners.
+        self.provider_key = provider_key or ""
         self.transport = transport
-        self.models = tuple(models)
-        if not self.models or len(self.models) > 100 or len(set(self.models)) != len(self.models):
-            raise ValueError("AI_SERVICE_MODELS must list 1..100 unique models")
-        for model in self.models:
-            if len(model) > 100 or not MODEL_PATTERN.fullmatch(model):
-                raise ValueError("AI_SERVICE_MODELS entries must look like gemini:<model>")
+        # None means: ask the AI server (GET /internal/models), which owns the
+        # model choice. An explicit AI_SERVICE_MODELS list overrides it.
+        self.models = None if models is None else tuple(models)
+        self._remote_models = ()
+        self._remote_available = {}
+        self._remote_checked = None
+        if self.models is not None:
+            self._validate_models(self.models)
         self.teachback = teachback or GeminiTeachbackClient(transport=transport, profile=profile)
         self.settings = {
             "min_question_count": self.MIN_QUESTION_COUNT,
             "analysis_max_calls": self.ANALYSIS_MAX_CALLS,
         }
 
+    @staticmethod
+    def _validate_models(models):
+        if not models or len(models) > 100 or len(set(models)) != len(models):
+            raise ValueError("AI_SERVICE_MODELS must list 1..100 unique models")
+        for model in models:
+            if len(model) > 100 or not MODEL_PATTERN.fullmatch(model):
+                raise ValueError("AI_SERVICE_MODELS entries must look like gemini:<model>")
+
     @classmethod
     def from_settings(cls, settings):
         models = tuple(getattr(settings, "ai_service_models", ()) or ())
-        if not models:
-            return None
         if not getattr(settings, "ai_service_url", ""):
-            raise ValueError("AI_SERVICE_MODELS requires AI_SERVICE_URL")
-        return cls(settings.ai_service_url, settings.ai_service_api_key, models, profile=settings.profile)
+            if models:
+                raise ValueError("AI_SERVICE_MODELS requires AI_SERVICE_URL")
+            return None
+        return cls(
+            settings.ai_service_url,
+            settings.ai_service_api_key,
+            models or None,
+            profile=settings.profile,
+            provider_key=getattr(settings, "gemini_api_key", ""),
+            teachback=DirectTeachback.from_settings(settings),
+        )
+
+    def _fetch_remote_models(self):
+        headers = {"X-AI-API-Key": self.api_key, "Accept-Encoding": "identity"}
+        with httpx.Client(
+            transport=self.transport,
+            timeout=self.MODEL_LIST_TIMEOUT_SECONDS,
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            response = client.get(self.base_url + "/internal/models", headers=headers)
+        if response.status_code != 200 or len(response.content) > self.MAX_ERROR_BYTES:
+            raise ValueError("AI server model list unavailable")
+        rows = strict_json(response.content)["data"]
+        models, available = [], {}
+        for row in rows[:100]:
+            model = row.get("id") if isinstance(row, dict) else None
+            if isinstance(model, str) and len(model) <= 100 and MODEL_PATTERN.fullmatch(model):
+                if model not in available:
+                    models.append(model)
+                available[model] = row.get("available") is True
+        return tuple(models), available
+
+    def current_models(self):
+        """Explicit AI_SERVICE_MODELS, or the AI server's own model list (cached)."""
+        if self.models is not None:
+            return self.models
+        now = time.monotonic()
+        if self._remote_checked is None or now >= self._remote_checked:
+            try:
+                self._remote_models, self._remote_available = self._fetch_remote_models()
+                self._remote_checked = now + self.MODEL_LIST_TTL_SECONDS
+            except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
+                # Keep the last good list and ask again soon.
+                self._remote_checked = now + self.MODEL_LIST_RETRY_SECONDS
+        return self._remote_models
 
     def handles_model(self, model_id):
-        return model_id in self.models
+        return isinstance(model_id, str) and model_id in self.current_models()
 
     def list_models(self):
+        models = self.current_models()
         return [
-            {"id": model, "provider": "gemini", "label": model.split(":", 1)[1], "available": True}
-            for model in self.models
+            {
+                "id": model,
+                "provider": "gemini",
+                "label": model.split(":", 1)[1],
+                "available": self._remote_available.get(model, False) if self.models is None else True,
+            }
+            for model in models
         ]
 
+    def service_key(self, model_id):
+        # The AI server owns provider credentials; a backend GEMINI_API_KEY is
+        # optional and only overrides the AI server's own key.
+        return self.provider_key or AI_SERVER_MANAGED_KEY
+
     def ensure_model(self, model_id):
-        if model_id not in self.models:
+        if not self.handles_model(model_id):
             raise ApiError(422, "MODEL_UNAVAILABLE", "The requested model is not enabled.")
 
     def _exchange(self, path, content, key, timeout_seconds):
+        # This is a private service-to-service call. ``key`` comes from the
+        # backend's GEMINI_API_KEY secret, never from a learner request.
         headers = {
             "X-AI-API-Key": self.api_key,
             "Accept-Encoding": "identity",
             "Content-Type": "application/json",
         }
-        if key is not None:
+        if key is not None and key != AI_SERVER_MANAGED_KEY:
             headers["X-AI-Key"] = key
         with httpx.Client(
             transport=self.transport,
@@ -439,31 +518,6 @@ class AiServerProvider:
                         break
                     content.extend(chunk)
                 return response.status_code, bytes(content)
-
-    def validate_key(self, model_id, key):
-        self.ensure_model(model_id)
-        check_key(key)
-        try:
-            status, content = self._exchange(
-                "/internal/models/validate-key",
-                _encode({"model_id": model_id}),
-                key,
-                self.KEY_VALIDATION_TIMEOUT_SECONDS,
-            )
-        except (httpx.HTTPError, ProviderFailure):
-            raise ApiError(
-                503, "KEY_VALIDATION_UNAVAILABLE", "Non-generating key validation is unavailable."
-            ) from None
-        if status == 422 and _error_code(content) == "PROVIDER_AUTH":
-            raise ApiError(422, "PROVIDER_AUTH", "The provider rejected the credential.")
-        if status == 200:
-            try:
-                body = strict_json(content)
-                if body.get("valid") is True and body.get("model_id") == model_id:
-                    return {"valid": True, "model_id": model_id}
-            except (ValueError, AttributeError):
-                pass
-        raise ApiError(503, "KEY_VALIDATION_UNAVAILABLE", "Non-generating key validation is unavailable.")
 
     def _build(self, model_id, kind, payload):
         builder = BUILDERS.get(kind)
@@ -484,6 +538,10 @@ class AiServerProvider:
         """Local checks only: no credential or network use before dispatch."""
         self.ensure_model(model_id)
         if kind == "message":
+            # The AI server has no text teach-back reply endpoint yet, so this
+            # kind still calls Gemini from the backend and needs GEMINI_API_KEY.
+            if not self.provider_key and not isinstance(self.teachback, DirectTeachback):
+                raise ProviderFailure("CREDENTIAL_UNAVAILABLE", retryable=True)
             self.teachback.preflight(model_id, payload)
         else:
             self._build(model_id, kind, payload)
@@ -492,6 +550,8 @@ class AiServerProvider:
         check_key(key)
         self.ensure_model(model_id)
         if kind == "message":
+            if key == AI_SERVER_MANAGED_KEY and not isinstance(self.teachback, DirectTeachback):
+                raise ProviderFailure("CREDENTIAL_UNAVAILABLE", retryable=True)
             return self.teachback.generate(model_id, key, payload)
         request = self._build(model_id, kind, payload)
         try:
@@ -513,8 +573,48 @@ class AiServerProvider:
             raise ProviderFailure("INVALID_OUTPUT") from None
 
 
+class DirectTeachback:
+    """Text teach-back replies through a direct OpenAI/Anthropic model (TEACHBACK_TEXT_MODEL).
+
+    The AI server has no text reply endpoint, so this single job kind is served
+    by the backend's own provider adapter with a service-managed key, whatever
+    gemini:* model the learner's job carries for the other AI server steps.
+    """
+
+    def __init__(self, registry, model_id, key):
+        self.registry, self.model_id, self.key = registry, model_id, key
+
+    @classmethod
+    def from_settings(cls, settings, *, transport=None):
+        model = (getattr(settings, "teachback_text_model", "") or "").strip()
+        if not model:
+            return None
+        from dataclasses import replace
+
+        from .providers import ProviderRegistry
+
+        provider = model.split(":", 1)[0]
+        key = getattr(settings, f"{provider}_api_key", "") or ""
+        if not key:
+            raise ValueError("TEACHBACK_TEXT_MODEL requires the matching provider API key")
+        registry = ProviderRegistry(replace(settings, enabled_models=(model,)), transport=transport)
+        return cls(registry, model, key)
+
+    @staticmethod
+    def _prompt(payload):
+        if not isinstance(payload, dict):
+            raise ProviderFailure("PROVIDER_UNAVAILABLE")
+        return {k: v for k, v in payload.items() if k != "ai_context"}
+
+    def preflight(self, model_id, payload):
+        self.registry.preflight(self.model_id, "message", self._prompt(payload))
+
+    def generate(self, model_id, key, payload):
+        return self.registry.generate(self.model_id, self.key, "message", self._prompt(payload))
+
+
 class GeminiTeachbackClient:
-    """Stopgap for the ``message`` kind: one learner question per call, BYOK key."""
+    """Stopgap for the ``message`` kind, authenticated with the server Gemini key."""
 
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
     TIMEOUT_SECONDS = 120
@@ -621,7 +721,8 @@ class CompositeProviders:
         self.direct, self.ai = direct, ai
 
     def uses_ai_server(self, model_id):
-        return self.ai is not None and self.ai.handles_model(model_id)
+        direct = {m["id"] for m in self.direct.list_models()}
+        return self.ai is not None and model_id not in direct and self.ai.handles_model(model_id)
 
     def _route(self, model_id):
         return self.ai if self.uses_ai_server(model_id) else self.direct
@@ -632,8 +733,8 @@ class CompositeProviders:
     def ensure_model(self, model_id):
         self._route(model_id).ensure_model(model_id)
 
-    def validate_key(self, model_id, key):
-        return self._route(model_id).validate_key(model_id, key)
+    def service_key(self, model_id):
+        return self._route(model_id).service_key(model_id)
 
     def preflight(self, model_id, kind, payload):
         target = self._route(model_id)
@@ -652,7 +753,7 @@ def build_providers(settings):
     ai = AiServerProvider.from_settings(settings)
     if ai is None:
         return direct
-    overlap = {m["id"] for m in direct.list_models()} & set(ai.models)
+    overlap = {m["id"] for m in direct.list_models()} & set(ai.models or ())
     if overlap:
         raise ValueError("A model cannot be enabled for both direct providers and the AI server")
     return CompositeProviders(direct, ai)

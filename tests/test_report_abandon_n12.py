@@ -162,7 +162,7 @@ def test_terminal_report_abandon_preserves_history_and_replays_without_a_key(rep
         operation = "retry" if failure == "retryable" else "restart"
         body = {"model_id": MODEL}
         if operation == "restart":
-            body["acknowledge_possible_duplicate_cost"] = True
+            body["acknowledge_possible_duplicate_execution"] = True
         stale = post(fx, f"/v1/jobs/{job_id}/{operation}", body)
         assert stale.status_code == 409 and stale.json()["error"]["code"] == "STALE_JOB", stale.text
         assert preserved_history(fx, session_id) == before
@@ -371,7 +371,7 @@ def assert_mysql_report_abandon_current_reads(fixture):
         return post(
             fx,
             f"/v1/jobs/{job_id}/restart",
-            {"model_id": MODEL, "acknowledge_possible_duplicate_cost": True},
+            {"model_id": MODEL, "acknowledge_possible_duplicate_execution": True},
         )
 
     # A cached terminal pointer must not hide a concurrently accepted successor.

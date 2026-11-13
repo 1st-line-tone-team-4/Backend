@@ -41,7 +41,6 @@ class ProviderRegistry:
     GENERATION_TIMEOUT_SECONDS = 300
     # Retained for test adapters that shorten the total generation deadline.
     TOTAL_TIMEOUT_SECONDS = GENERATION_TIMEOUT_SECONDS
-    KEY_VALIDATION_TIMEOUT_SECONDS = 15
     OUTPUT_TOKEN_CAPS = {"analysis": 16384, "questions": 12288, "learning_explanation": 4096}
     # Application/source-file limit, not an OpenAI per-image limit.
     MAX_IMAGE_BYTES = 20 * 1024 * 1024
@@ -55,6 +54,7 @@ class ProviderRegistry:
             raise ValueError("Custom provider transports are test-only")
         if type(max_completion_tokens) is not int or not 1 <= max_completion_tokens <= 16384:
             raise ValueError("Completion token cap must be an integer between 1 and 16384")
+        self.settings = settings
         self.transport = transport
         if usage_observer is not None and not callable(usage_observer):
             raise ValueError("Usage observer must be callable")
@@ -73,20 +73,31 @@ class ProviderRegistry:
 
     def list_models(self):
         return [
-            {"id": m, "provider": m.split(":", 1)[0], "label": m.split(":", 1)[1], "available": True}
+            {
+                "id": m,
+                "provider": m.split(":", 1)[0],
+                "label": m.split(":", 1)[1],
+                "available": bool(self.service_key(m)),
+            }
             for m in self.models
         ]
+
+    def service_key(self, model_id):
+        provider = model_id.split(":", 1)[0] if isinstance(model_id, str) else ""
+        return getattr(self.settings, f"{provider}_api_key", "") or None
 
     def ensure_model(self, model_id):
         if model_id not in self.models:
             raise ApiError(422, "MODEL_UNAVAILABLE", "The requested model is not enabled.")
+        if getattr(self.settings, "profile", "production") != "test" and not self.service_key(model_id):
+            raise ApiError(503, "AI_NOT_CONFIGURED", "The requested AI model is not configured.")
 
     async def _exchange(self, method, url, key, body, max_bytes, provider, timeout_seconds):
         # Bound the whole response before JSON parsing. No redirects or
-        # environment proxies: neither may redirect the BYOK credential.
+        # environment proxies: neither may redirect a service provider secret.
         headers = {"Accept-Encoding": "identity"}
         if provider == "anthropic":
-            # Send BYOK API keys using the supported x-api-key header.
+            # Send service-managed Anthropic keys using the supported x-api-key header.
             headers["x-api-key"] = key
             headers["anthropic-version"] = self.ANTHROPIC_VERSION
         else:
@@ -139,28 +150,6 @@ class ProviderRegistry:
             )
 
         return asyncio.run(bounded_request())
-
-    def validate_key(self, model_id, key):
-        self.ensure_model(model_id)
-        check_key(key)
-        try:
-            status, _ = self._request(
-                "GET",
-                f"/models/{model_id.split(':', 1)[1]}",
-                key,
-                max_bytes=65536,
-                provider=model_id.split(":", 1)[0],
-                timeout_seconds=self.KEY_VALIDATION_TIMEOUT_SECONDS,
-            )
-        except (httpx.HTTPError, TimeoutError, ProviderFailure):
-            raise ApiError(
-                503, "KEY_VALIDATION_UNAVAILABLE", "Non-generating key validation is unavailable."
-            ) from None
-        if status in (401, 403):
-            raise ApiError(422, "PROVIDER_AUTH", "The provider rejected the credential.")
-        if status != 200:
-            raise ApiError(503, "KEY_VALIDATION_UNAVAILABLE", "Non-generating key validation is unavailable.")
-        return {"valid": True, "model_id": model_id}
 
     def preflight(self, model_id, kind, payload):
         """Validate locally before the worker durably marks provider dispatch.

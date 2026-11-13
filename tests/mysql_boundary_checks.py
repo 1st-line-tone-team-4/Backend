@@ -211,7 +211,7 @@ def assert_mysql_unknown_uses_current_read(live):
                     client.post(
                         "/v1/question-sets",
                         json=body,
-                        headers={"Idempotency-Key": first_key, "X-AI-Key": e2e.KEY},
+                        headers={"Idempotency-Key": first_key},
                     )
                 )
         except BaseException as exc:
@@ -239,7 +239,7 @@ def assert_mysql_unknown_uses_current_read(live):
         if failures:
             raise failures[0]
         assert len(result) == 1 and result[0].status_code == 409, [r.text for r in result]
-        assert result[0].json()["error"]["code"] == "POSSIBLE_DUPLICATE_COST"
+        assert result[0].json()["error"]["code"] == "DUPLICATE_EXECUTION_ACK_REQUIRED"
         assert len(live.provider.calls) == before + 1
         with live.ctx.db.transaction() as session:
             matching = [

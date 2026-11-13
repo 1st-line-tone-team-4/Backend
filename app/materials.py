@@ -313,7 +313,6 @@ def complete(
     body: Complete,
     request: Request,
     idempotency_key: str = Header(alias="Idempotency-Key"),
-    ai_key: str = Header(alias="X-AI-Key"),
 ):
     ctx = get_context(request)
     user = get_user(request)
@@ -369,7 +368,6 @@ def complete(
             resource_id=m.id,
             payload={"material_id": m.id},
             model_id=body.model_id,
-            ai_key=ai_key,
         )
         m.latest_job_id = job.id
         m.processing_status = "queued"
@@ -646,7 +644,8 @@ def remove(materialId: str, request: Request):
             j.result_url = None
             j.retryable = False
             if j.credential_ref:
-                ctx.credentials.delete(j.credential_ref)
+                if ctx.credentials:
+                    ctx.credentials.delete(j.credential_ref)
                 j.credential_ref = None
         s.add(
             StorageDeletion(

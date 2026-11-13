@@ -184,7 +184,9 @@ def assert_unknown_history(fx, prior):
 
 def assert_restart_stale(fx, job_id):
     reply = post(
-        fx, f"/v1/jobs/{job_id}/restart", {"model_id": MODEL, "acknowledge_possible_duplicate_cost": True}
+        fx,
+        f"/v1/jobs/{job_id}/restart",
+        {"model_id": MODEL, "acknowledge_possible_duplicate_execution": True},
     )
     assert reply.status_code == 409 and reply.json()["error"]["code"] == "STALE_JOB", reply.text
 
@@ -201,9 +203,11 @@ def test_unknown_grade_history_allows_different_answer_skip_and_replan(terminal_
     fx = terminal_env
     prior = fail_unknown(fx, grade(fx))
     same = grade(fx)
-    assert same.status_code == 409 and same.json()["error"]["code"] == "POSSIBLE_DUPLICATE_COST"
+    assert same.status_code == 409 and same.json()["error"]["code"] == "DUPLICATE_EXECUTION_ACK_REQUIRED"
     no_ack = post(
-        fx, f"/v1/jobs/{prior.id}/restart", {"model_id": MODEL, "acknowledge_possible_duplicate_cost": False}
+        fx,
+        f"/v1/jobs/{prior.id}/restart",
+        {"model_id": MODEL, "acknowledge_possible_duplicate_execution": False},
     )
     assert no_ack.status_code == 422
     run_job(fx, grade(fx, "A different learning answer"))

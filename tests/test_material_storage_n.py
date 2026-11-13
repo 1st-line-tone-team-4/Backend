@@ -48,7 +48,7 @@ def post(web, path, body, key=None):
     return web.client.post(
         path,
         json=body,
-        headers={"Idempotency-Key": key or uid(), "X-AI-Key": KEY},
+        headers={"Idempotency-Key": key or uid()},
     )
 
 
@@ -365,7 +365,7 @@ def test_delete_preserves_terminal_audit_chain_and_redacts_source(web):
     first = completed(web, mid).json()["data"]["job"]["id"]
     web.provider.fail_next = ProviderFailure("TIMEOUT_UNKNOWN", outcome_unknown=True)
     assert web.ctx.jobs.run_once()
-    restart = {"model_id": MODEL, "acknowledge_possible_duplicate_cost": True}
+    restart = {"model_id": MODEL, "acknowledge_possible_duplicate_execution": True}
     response = post(web, f"/v1/jobs/{first}/restart", restart)
     assert response.status_code == 202, response.text
     second = response.json()["data"]["job"]["id"]

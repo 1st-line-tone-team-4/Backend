@@ -35,11 +35,19 @@ class Settings:
     auth_issuer: str = ""
     auth_audience: str = ""
     enabled_models: tuple = ()
+    # Service-owned provider credentials; never accepted from client requests.
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    gemini_api_key: str = ""
     # Optional internal AI server (repo AI). Empty keeps local extraction.
     ai_service_url: str = ""
     ai_service_api_key: str = ""
     # gemini:<model> IDs generated through the AI server; empty keeps recognition only.
     ai_service_models: tuple = ()
+    # Optional provider-qualified model (e.g. openai:<model>) for text teach-back
+    # replies, the one AI step the AI server has no endpoint for. Empty keeps the
+    # backend's Gemini stopgap. Uses the matching *_API_KEY above.
+    teachback_text_model: str = ""
     # Browser origins allowed to call the API cross-origin. Empty: same-origin only.
     cors_allowed_origins: tuple = ()
 

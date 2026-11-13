@@ -9,7 +9,6 @@ from sqlalchemy import and_, or_, select
 
 from app.content import get_grading_question
 from app.core import ApiError, get_context, get_user, idempotent, uid, utcnow
-from app.credentials import check_key
 from app.jobs import accepted
 from app.models import Job, QuestionAttempt
 from app.projections import attempt_dto, attempt_dtos
@@ -26,10 +25,8 @@ def submit_attempt(
     body: AttemptInput,
     request: Request,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128)],
-    ai_key: Annotated[str, Header(alias="X-AI-Key", min_length=1, max_length=512)],
 ):
     ctx, user = get_context(request), get_user(request)
-    check_key(ai_key)
     data = body.model_dump(mode="json", exclude_none=True)
     qid = str(question_id)
 
@@ -54,7 +51,7 @@ def submit_attempt(
         if attempts and attempts[0].status == "failed" and attempts[0].answer == answer:
             prior = db.get(Job, attempts[0].job_id)
             code = (
-                "POSSIBLE_DUPLICATE_COST"
+                "DUPLICATE_EXECUTION_ACK_REQUIRED"
                 if prior and prior.status == "outcome_unknown"
                 else "JOB_NOT_RETRYABLE"
             )
@@ -68,7 +65,6 @@ def submit_attempt(
             resource_id=attempt_id,
             payload={"question_id": qid, "question_set_id": question_set.id, "answer": answer},
             model_id=data["model_id"],
-            ai_key=ai_key,
         )
         # Preserve the total order when two submissions share a clock tick.
         answered = utcnow()

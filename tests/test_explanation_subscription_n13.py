@@ -17,7 +17,7 @@ from sqlalchemy import event, select
 
 from app.core import uid, utcnow
 from app.models import IdempotencyRequest, Job, LearningExplanation
-from tests.ab_support import KEY, MODEL, ab_http_application
+from tests.ab_support import MODEL, ab_http_application
 from tests.test_ab_e2e import post, run_job, validate
 from tests.test_terminal_jobs_n11 import assert_unknown_history, fail_unknown, seed_terminal_graph
 
@@ -64,7 +64,7 @@ def test_explanation_same_key_active_guard_and_owner_isolation(explanation_env):
         post(
             fx,
             f"/v1/jobs/{job['id']}/restart",
-            {"model_id": MODEL, "acknowledge_possible_duplicate_cost": True},
+            {"model_id": MODEL, "acknowledge_possible_duplicate_execution": True},
             headers=fx.other_headers,
         ),
     ]
@@ -125,7 +125,7 @@ def test_explicit_explanation_after_unknown_needs_no_ack_and_preserves_history(e
     assert retry.status_code == 409 and retry.json()["error"]["code"] == "JOB_NOT_RETRYABLE"
     for restart_body in (
         {"model_id": MODEL},
-        {"model_id": MODEL, "acknowledge_possible_duplicate_cost": False},
+        {"model_id": MODEL, "acknowledge_possible_duplicate_execution": False},
     ):
         rejected = post(fx, f"/v1/jobs/{prior.id}/restart", restart_body)
         assert rejected.status_code == 422, rejected.text
@@ -156,7 +156,7 @@ def test_explicit_explanation_after_unknown_needs_no_ack_and_preserves_history(e
     restarted = post(
         fx,
         f"/v1/jobs/{prior.id}/restart",
-        {"model_id": MODEL, "acknowledge_possible_duplicate_cost": True},
+        {"model_id": MODEL, "acknowledge_possible_duplicate_execution": True},
     )
     assert restarted.status_code == 202, restarted.text
     assert restarted.json()["data"]["job"]["resource_id"] == prior.resource_id
@@ -198,7 +198,7 @@ def _request_thread(fixture, body, key, index, results, failures):
             results[index] = client.post(
                 "/v1/learning-explanations",
                 json=body,
-                headers={"Idempotency-Key": key, "X-AI-Key": KEY},
+                headers={"Idempotency-Key": key},
             )
     except BaseException as exc:
         failures.append(exc)
@@ -232,8 +232,9 @@ def _assert_generation_outcomes(fx, bodies, keys, results, statuses, prior_refs,
         ]
         assert {job.id for job in jobs} == accepted_ids
         assert all(job.status == "queued" and job.dispatched_at is None for job in jobs)
-        assert all(job.credential_ref for job in jobs)
-        assert _credential_refs(fx) == prior_refs | {job.credential_ref for job in jobs}
+        # Contract 1.4.0: no learner credential is staged for accepted jobs.
+        assert all(job.credential_ref is None for job in jobs)
+        assert _credential_refs(fx) == prior_refs
         resources = db.scalars(
             select(LearningExplanation).where(LearningExplanation.latest_job_id.in_(accepted_ids))
         ).all()

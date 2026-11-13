@@ -3,10 +3,9 @@
 from threading import Event, Thread
 
 import httpx
-from sqlalchemy import event, select, text, update
+from sqlalchemy import event, text, update
 
-from app.core import uid
-from app.models import IdempotencyRequest, Job, Material
+from app.models import Job, Material
 from app.providers import ProviderFailure
 import tests.test_e2e as e2e
 
@@ -14,77 +13,6 @@ import tests.test_e2e as e2e
 def _short_lock_wait(session):
     if session.bind.dialect.name == "mysql":
         session.execute(text("SET SESSION innodb_lock_wait_timeout = 2"))
-
-
-def assert_key_validation_releases_transaction(live):
-    entered, release = Event(), Event()
-    results, failures, calls = [], [], []
-    original = live.provider.validate_key
-    idem = uid()
-
-    def blocked(model, key):
-        calls.append(model)  # Never retain even synthetic credential values.
-        entered.set()
-        assert release.wait(20), "Validation probe did not release the provider"
-        return original(model, key)
-
-    def request():
-        try:
-            with httpx.Client(
-                base_url=str(live.client.base_url), headers=e2e.OWNER, timeout=25, trust_env=False
-            ) as client:
-                results.append(
-                    client.post(
-                        "/v1/ai/validate-key",
-                        json={"model_id": e2e.MODEL},
-                        headers={"Idempotency-Key": idem, "X-AI-Key": e2e.KEY},
-                    )
-                )
-        except BaseException as exc:
-            failures.append(exc)
-
-    live.provider.validate_key = blocked
-    thread = Thread(target=request, daemon=True)
-    try:
-        thread.start()
-        assert entered.wait(10), "Provider validation did not start"
-        with live.ctx.db.transaction() as session:
-            _short_lock_wait(session)
-            claim = session.scalar(
-                select(IdempotencyRequest).where(IdempotencyRequest.idempotency_key == idem)
-            )
-            assert claim is not None and claim.status == "in_progress"
-            # The durable claim must be readable and writable while HTTP waits.
-            result = session.execute(
-                update(IdempotencyRequest)
-                .where(IdempotencyRequest.idempotency_key == idem)
-                .values(expires_at=IdempotencyRequest.expires_at)
-            )
-            assert result.rowcount == 1
-        same = e2e.post(live, "/v1/ai/validate-key", {"model_id": e2e.MODEL}, idem=idem)
-        assert same.status_code == 409 and same.json()["error"]["code"] == "REQUEST_IN_PROGRESS"
-        changed = e2e.post(
-            live,
-            "/v1/ai/validate-key",
-            {"model_id": e2e.MODEL},
-            idem=idem,
-            headers={"X-AI-Key": "different-synthetic-key"},
-        )
-        assert changed.status_code == 409
-        assert changed.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
-        release.set()
-        thread.join(10)
-        assert not thread.is_alive()
-        if failures:
-            raise failures[0]
-        assert len(results) == 1 and results[0].status_code == 200
-        replay = e2e.post(live, "/v1/ai/validate-key", {"model_id": e2e.MODEL}, idem=idem)
-        assert replay.status_code == 200 and replay.json() == results[0].json()
-        assert calls == [e2e.MODEL]
-    finally:
-        release.set()
-        thread.join(26)
-        live.provider.validate_key = original
 
 
 def assert_analysis_preparation_releases_locks(live):
@@ -213,7 +141,7 @@ def assert_unknown_job_audit_survives_material_deletion(live):
     restarted = e2e.post(
         live,
         f"/v1/jobs/{job_id}/restart",
-        {"model_id": e2e.MODEL, "acknowledge_possible_duplicate_cost": True},
+        {"model_id": e2e.MODEL, "acknowledge_possible_duplicate_execution": True},
     )
     assert restarted.status_code == 409 and restarted.json()["error"]["code"] == "STALE_JOB"
     assert len(live.provider.calls) == before + 1

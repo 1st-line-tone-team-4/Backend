@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import event
 from sqlalchemy.exc import OperationalError
 
 from app import jobs as jobs_module
@@ -57,34 +57,31 @@ def test_full_generation_budget_does_not_expire_healthy_worker(context, monkeypa
     assert context.providers.calls == 1
 
 
-def test_enqueue_outer_rollback_removes_new_credential(context):
-    ref = None
-    with pytest.raises(RuntimeError, match="rollback fixture"):
-        with context.db.transaction() as session:
-            job = context.jobs.enqueue(
-                session,
-                user_id=context.owner,
-                kind="analysis",
-                resource_type="material",
-                resource_id=context.resource,
-                payload={},
-                model_id="openai:test-model",
-                ai_key=KEY,
-            )
-            ref = job.credential_ref
-            raise RuntimeError("rollback fixture")
-    assert ref and context.credentials.get(ref) is None
+def test_enqueue_never_stages_a_learner_credential(context):
+    # Contract 1.4.0: provider keys are service-managed; nothing enters the vault.
     with context.db.transaction() as session:
-        assert session.scalar(select(Job.id)) is None
+        job = context.jobs.enqueue(
+            session,
+            user_id=context.owner,
+            kind="analysis",
+            resource_type="material",
+            resource_id=context.resource,
+            payload={},
+            model_id="openai:test-model",
+        )
+        assert job.credential_ref is None
 
 
-def _failed_with_live_credential(context):
+def _failed_with_legacy_credential(context):
+    """A failed job left behind by the former BYOK deployment."""
     job_id = enqueue(context)
+    ref = context.credentials.put(KEY)
     with context.db.transaction() as session:
         job = session.get(Job, job_id)
         job.status, job.retryable, job.error_code = "failed", True, "PROVIDER_UNAVAILABLE"
+        job.credential_ref = ref
         session.get(Material, context.resource).processing_status = "failed"
-        return job_id, job.credential_ref
+    return job_id, ref
 
 
 def _retry(context, session, job_id):
@@ -93,61 +90,40 @@ def _retry(context, session, job_id):
         job_id=job_id,
         user_id=context.owner,
         model_id="openai:test-model",
-        ai_key=KEY,
     )
 
 
 @pytest.mark.parametrize("savepoint", [False, True])
-def test_retry_rollback_cleans_new_ref_and_preserves_old(context, savepoint):
-    job_id, old_ref = _failed_with_live_credential(context)
-    new_refs = []
+def test_retry_rollback_preserves_legacy_ref(context, savepoint):
+    job_id, old_ref = _failed_with_legacy_credential(context)
     if savepoint:
         with context.db.transaction() as session:
             with pytest.raises(RuntimeError, match="rollback fixture"):
                 with session.begin_nested():
-                    new_refs.append(_retry(context, session, job_id).credential_ref)
+                    assert _retry(context, session, job_id).credential_ref is None
                     raise RuntimeError("rollback fixture")
     else:
         with pytest.raises(RuntimeError, match="rollback fixture"):
             with context.db.transaction() as session:
-                new_refs.append(_retry(context, session, job_id).credential_ref)
+                assert _retry(context, session, job_id).credential_ref is None
                 raise RuntimeError("rollback fixture")
-    assert context.credentials.get(new_refs[0]) is None
     assert context.credentials.get(old_ref) == KEY
     job = read_job(context, job_id)
     assert (job.status, job.credential_ref, job.attempt_no) == ("failed", old_ref, 1)
 
 
-def test_retry_commit_retires_old_ref_only_after_outer_commit(context):
-    job_id, old_ref = _failed_with_live_credential(context)
+def test_retry_commit_retires_legacy_ref_only_after_outer_commit(context):
+    job_id, old_ref = _failed_with_legacy_credential(context)
     with context.db.transaction() as session:
         with session.begin_nested():
-            new_ref = _retry(context, session, job_id).credential_ref
+            assert _retry(context, session, job_id).credential_ref is None
         assert context.credentials.get(old_ref) == KEY
-        assert context.credentials.get(new_ref) == KEY
     assert context.credentials.get(old_ref) is None
-    assert context.credentials.get(new_ref) == KEY
+    assert read_job(context, job_id).credential_ref is None
 
 
-def test_failed_postcommit_cleanup_never_rolls_back_new_ref(context, monkeypatch):
-    job_id, old_ref = _failed_with_live_credential(context)
-    delete = context.credentials.delete
-
-    def fail_old(ref):
-        if ref == old_ref:
-            raise RuntimeError("synthetic private vault failure")
-        delete(ref)
-
-    monkeypatch.setattr(context.credentials, "delete", fail_old)
-    with pytest.raises(RuntimeError, match="Transaction cleanup"):
-        with context.db.transaction() as session:
-            new_ref = _retry(context, session, job_id).credential_ref
-    assert read_job(context, job_id).credential_ref == new_ref
-    assert context.credentials.get(new_ref) == KEY
-
-
-def test_uncertain_commit_retains_durable_jobs_staged_key(context, monkeypatch):
-    job_id, old_ref = _failed_with_live_credential(context)
+def test_uncertain_commit_retains_legacy_ref(context, monkeypatch):
+    job_id, old_ref = _failed_with_legacy_credential(context)
     commit = context.db.engine.dialect.do_commit
     called = False
 
@@ -161,10 +137,10 @@ def test_uncertain_commit_retains_durable_jobs_staged_key(context, monkeypatch):
     monkeypatch.setattr(context.db.engine.dialect, "do_commit", commit_then_lose_ack)
     with pytest.raises(OperationalError):
         with context.db.transaction() as session:
-            new_ref = _retry(context, session, job_id).credential_ref
-    assert read_job(context, job_id).credential_ref == new_ref
-    assert context.credentials.get(new_ref) == KEY
-    # A lost acknowledgement does not authorize deleting either possible owner.
+            _retry(context, session, job_id)
+    assert read_job(context, job_id).credential_ref is None
+    # A lost acknowledgement does not authorize deleting the old owner's ref;
+    # the bounded vault TTL and recover() purge it later.
     assert context.credentials.get(old_ref) == KEY
 
 

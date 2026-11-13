@@ -1,6 +1,6 @@
 # Team4 Learning Backend — A+B 통합
 
-Python 3.12 / FastAPI 기반 학습 API입니다. A의 목표·계획·채점·Teach-back·학습 기록과 B의 자료·개념·문제·자습 설명을 **하나의 앱, DB, 인증, 비동기 worker**로 실행합니다. 계약 원본은 `contracts/`의 `1.3.0-backend-proposal`이며, 실제 제공 경로는 실행 중인 `/docs`, `/openapi.json`과 [통합 API 안내](docs/API_SPEC_FULL.md)에서 확인합니다.
+Python 3.12 / FastAPI 기반 학습 API입니다. A의 목표·계획·채점·Teach-back·학습 기록과 B의 자료·개념·문제·자습 설명을 **하나의 앱, DB, 인증, 비동기 worker**로 실행합니다. 구현된 최종 API 명세는 [`contracts/openapi-final-monthly-subscription.yaml`](contracts/openapi-final-monthly-subscription.yaml)이며, 실행 중인 `/docs`, `/openapi.json`과 [통합 API 안내](docs/API_SPEC_FULL.md)에서도 확인할 수 있습니다.
 
 ## 팀 개발 시작
 
@@ -47,11 +47,13 @@ foreach ($migrationFile in $migrationFiles) {
 | `DATABASE_URL` | `mysql+pymysql://…?charset=utf8mb4` |
 | `STORAGE_ROOT`, `PUBLIC_BASE_URL` | 비공개 파일 경로와 클라이언트가 접근할 API 주소 |
 | `SIGNING_SECRET` | 외부에서 공급한 32바이트 이상의 비밀값; 저장소 URL·cursor 서명 |
-| `CREDENTIAL_ENCRYPTION_KEY` | 외부에서 공급한 base64 인코딩 32바이트 AES 키 |
+| `CREDENTIAL_ENCRYPTION_KEY` | 선택. 이전 BYOK Job의 남은 credential 정리에 필요한 base64 인코딩 32바이트 AES 키 |
 | `AUTH_PUBLIC_KEY`, `AUTH_ISSUER`, `AUTH_AUDIENCE` | 외부 인증 제공자의 RS256 공개키 PEM·issuer·audience |
 | `ENABLED_MODELS` | 승인한 `openai:<model>` / `anthropic:<model>` ID의 쉼표 구분 목록; 비어 있으면 활성 모델 없음 |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | 서비스가 Secret Manager에서 공급받는 제공자 키. 요청·DB·로그·Git에 넣지 않음. `ENABLED_MODELS`의 OpenAI/Anthropic 모델은 해당 키가 필요합니다. AI 서버 경유 모델은 AI 서버가 자기 `GEMINI_API_KEY`를 쓰므로(`AI_USE_SERVER_TEXT_KEY=true`) 백엔드 `GEMINI_API_KEY`는 선택이며, 설정하면 AI 서버 키 대신 전달됩니다. 단, 텍스트 Teach-back 답변은 AI 서버에 경로가 없어 백엔드 `GEMINI_API_KEY`가 있어야 합니다 |
 | `AI_SERVICE_URL`, `AI_SERVICE_API_KEY` | 선택. AI 서버(`AI` repo) 주소와 서버 간 키(AI 서버의 `AI_SERVER_API_KEY`). 설정하면 PDF/PNG/JPEG 인식을 AI 서버의 Upstage 문서 인식으로 처리하고, 비우면 기존 로컬 추출을 사용합니다. 자세한 내용은 [팀 repo 통합 안내](docs/INTEGRATION_REPOS.md) |
-| `AI_SERVICE_MODELS` | 선택. AI 서버로 생성할 `gemini:<model>` ID의 쉼표 구분 목록(AI 서버의 모델 허용 목록과 같은 값). 설정하면 이 모델로 요청한 분석·문제 생성·채점·학습 설명·Teach-back 리포트를 AI 서버 내부 API로 처리하고, Teach-back 질문은 같은 BYOK 키로 Gemini를 직접 호출합니다. `AI_SERVICE_URL`이 필요하며 `ENABLED_MODELS`와 겹칠 수 없습니다. |
+| `TEACHBACK_TEXT_MODEL` | 선택. 텍스트 Teach-back 답변(AI 서버에 경로가 없는 유일한 단계)을 처리할 직접 모델(예: `openai:<model>`). 해당 제공자 키(`OPENAI_API_KEY` 등)가 필요하며, 비우면 백엔드 `GEMINI_API_KEY`로 Gemini를 호출합니다. |
+| `AI_SERVICE_MODELS` | 선택. 비우면 모델 목록을 AI 서버의 `GET /internal/models`에서 받아(60초 캐시) 분석·문제 생성·채점·학습 설명·Teach-back 리포트를 내부 API로 처리합니다. 모델 선택은 AI 서버 설정이 결정합니다. 값을 넣으면 그 `gemini:<model>` 목록으로 고정합니다. `AI_SERVICE_URL`이 필요하며 `ENABLED_MODELS`와 겹칠 수 없습니다. |
 | `CORS_ALLOWED_ORIGINS` | 선택. 프런트엔드를 API와 다른 origin에서 서비스할 때 허용할 정확한 origin의 쉼표 구분 목록(예: `https://team4.vercel.app`). 경로·`*`·끝 슬래시는 거부하며, `production`에서는 https만 허용합니다. 비우면 CORS 헤더를 보내지 않습니다(같은 origin 프록시 사용). |
 
 필수 설정과 DB를 준비한 후 같은 환경을 사용하는 두 터미널에서 실행합니다.
@@ -83,9 +85,9 @@ python -m app.worker --once
 4. 문제 생성·채점, Teach-back 메시지·리포트는 `202`의 Job을 조회해 완료를 확인합니다.
 5. `/v1/today`와 `/v1/records/*`에서 같은 DB의 결과와 진행 상태를 읽습니다.
 
-AI 단계에는 활성 모델과 요청별 `X-AI-Key`가 필요합니다. 실키 검증이나 유료 생성은 기본 통합 테스트에 포함되지 않으며, 별도로 승인된 경우에만 실행합니다.
+AI 단계에는 허용 모델과 서버에 설정된 제공자 키가 필요합니다. 클라이언트는 제공자 키를 입력하거나 `X-AI-Key`로 전송하지 않습니다. 서버는 설정된 키가 없는 모델을 사용 불가로 표시하고 요청을 거부합니다.
 
-제품 과금 방침은 월 구독입니다. 독립 학습 설명의 새 생성에는 건별 비용 동의를 추가하지 않습니다. 새 멱등키는 명시적인 새 생성 요청이고, 같은 키 재생·활성 작업 중복 차단·결과불명 Job의 자동 재호출 금지는 유지합니다. 현재 BYOK의 외부 provider 비용과 공통 Job restart 경고는 앱 구독과 별개입니다. 결제·구독 권한 검증 API를 새로 구현한 것은 아닙니다.
+제품 과금 방침은 월 구독입니다. 가격·결제사는 아직 정해지지 않아 checkout과 실제 구독 권한 검증은 후속 연동 범위입니다. `GET /v1/billing/capabilities`는 `pricing_pending`, `checkout_enabled=false`를 반환합니다. 모든 AI 생성은 서버 관리 제공자 키를 사용합니다. 중복 실행 동의는 결과가 불확실한 작업의 AI 재실행 가능성에 대한 것이며 구독료 외 별도 결제를 뜻하지 않습니다.
 
 보고서 작업이 종료된 `report_pending` 세션은 저장된 보고서가 없으면 `{status:"abandoned"}` PATCH로 포기할 수 있습니다. 실행 중 작업은 `409`로 보호하고, 완료된 보고서는 변경하지 않습니다. 포기 재시도는 `200`이며, 기존 대화·Job 포인터·실패 이력을 남깁니다. 연결된 계획이 바뀌어도 포기 재시도가 가능하며 학습 완료량을 바꾸지 않습니다.
 
@@ -93,22 +95,22 @@ AI 단계에는 활성 모델과 요청별 `X-AI-Key`가 필요합니다. 실키
 
 - POST는 `Idempotency-Key`를 사용합니다. 같은 키·같은 요청은 재생하고 다른 내용은 `409`로 거부합니다. 키 길이는 16–128자이며 기록은 24시간 유효합니다. PATCH에 POST 멱등성 규칙을 추가하지 않았습니다.
 - 모든 A/B 비동기 작업은 `ai_jobs`와 같은 JobService를 사용합니다. 등록 종류는 `analysis`, `questions`, `learning_explanation`, `grade`, `message`, `report`입니다. `202`는 접수 응답이며 결과 생성 완료가 아닙니다.
-- worker는 lease/fencing과 현재 Job 포인터를 검사합니다. provider 결과가 불확실하면 `outcome_unknown`으로 남기고 자동 재호출하지 않습니다. retry는 재시도 가능한 확정 실패에만 허용되며, restart는 새 키와 `acknowledge_possible_duplicate_cost=true`가 필요합니다.
-- 요청별 AI 키는 암호화된 TTL vault에 최대 15분만 보관합니다. 원문 키를 도메인 DB·로그·Git·일반 환경 변수에 저장하지 않습니다. 프록시도 Authorization, X-AI-Key, signed URL query를 기록하지 않도록 설정합니다.
+- worker는 lease/fencing과 현재 Job 포인터를 검사합니다. provider 결과가 불확실하면 `outcome_unknown`으로 남기고 자동 재호출하지 않습니다. retry는 재시도 가능한 확정 실패에만 허용되며, restart는 서비스 관리 키를 사용하고 `acknowledge_possible_duplicate_execution=true`가 필요합니다. 이 동의는 사용자 추가 결제를 뜻하지 않습니다.
+- 제공자 키는 Secret Manager에서 서버에 공급하고 도메인 DB·로그·Git·클라이언트에 저장하지 않습니다. 프록시도 Authorization과 signed URL query를 기록하지 않도록 설정합니다. 구형 Job의 credential reference는 새 AI 제공에 사용하지 않습니다.
 - 소스 파일은 비공개 저장소와 목적·소유자·만료가 묶인 서명 URL로 접근합니다. 자료 삭제는 참조 검증과 outbox를 거치며 worker가 실제 파일을 제거합니다. 인증 없는 소스 접근이나 임의 외부 URL 가져오기는 제공하지 않습니다.
 - 확인된 개념 버전과 evidence는 고정됩니다. 계획의 개념 정보와 리포트 항목은 정규화된 행에서 읽으며 JSON 복제본이나 별도 A 테이블에 B 데이터를 복사하지 않습니다. 자습 설명 생성은 task 완료량이나 coverage를 바꾸지 않습니다.
 
-provider 생성 요청의 전체 제한은 300초, 비생성 키 검증은 15초이며 기본 worker lease는 420초입니다. 생성 300초와 준비 예산 60초의 합보다 lease가 반드시 길어야 하므로 생성자에서 `420 > 300 + 60` 조건을 검증합니다. 기존 계약의 provider 60초 문구는 승인된 이 런타임 설정에 맞게 수정했으며, 응답 schema나 retry/restart 정책을 바꾸지 않았습니다. 이는 대기열부터 결과까지의 전체 완료 시간을 보증하는 수치가 아닙니다. 업로드·출력 크기와 파서 제한, 불확실한 COMMIT 처리 등 기존 보안 경계는 [추가 검수 기록](docs/REVIEW-N-FIXES.md)에 정리되어 있습니다.
+provider 생성 요청의 전체 제한은 300초이며 기본 worker lease는 420초입니다. 준비 예산 60초를 포함해 생성자에서 `420 > 300 + 60` 조건을 검증합니다. 이는 대기열부터 결과까지의 전체 완료 시간을 보증하는 수치가 아닙니다. 업로드·출력 크기와 파서 제한, 불확실한 COMMIT 처리 등 기존 보안 경계는 [추가 검수 기록](docs/REVIEW-N-FIXES.md)에 정리되어 있습니다.
 
 ## 제공 범위와 검증 자료
 
-전체 계약은 50개 경로·64개 작업이고 통합 서버가 제공하는 범위는 **40개 경로·51개 작업(B24 + A27)**입니다. 공개 게시·공개 풀이 생성·점수 인증·결제 capability의 13개 미구현 작업은 [정확한 차이 목록](docs/INTEGRATION_VALIDATION.md#contract-coverage-and-timing-n15)에 정리했습니다. 구현된 계약 handler의 등록 누락은 발견하지 못했으며, 35개 테이블이 있다는 사실이 빠진 기능의 구현을 뜻하지는 않습니다.
+현재 전체 계약은 49개 경로·63개 작업이고, 통합 서버는 그중 40개 경로·51개 작업을 게시합니다. 월 구독 상태를 알리는 `GET /billing/capabilities`는 구현되어 있지만 실제 checkout과 구독 권한 검증은 아직 없습니다. 공개 게시·공개 풀이 생성·점수 인증과 결제 연동의 미구현 범위는 [통합 검증 기록](docs/INTEGRATION_VALIDATION.md)을 참고하세요. 35개 테이블이 있다는 사실이 빠진 기능의 구현을 뜻하지는 않습니다.
 
 `GET /v1/records/public-attempts`는 구현되어 있으며 소유자의 저장된 개인 snapshot을 조회합니다. 적법하게 준비하거나 가져온 기존 데이터가 있으면 결과를 반환하므로 항상 빈 목록이라고 가정하지 않습니다. 이 조회가 공개 게시나 새로운 공개 풀이 생성 API를 대신하지는 않습니다.
 
 - [통합 API 경로·상태 안내](docs/API_SPEC_FULL.md), [A 학습 흐름 안내](docs/A_API_SPEC.md)
 - [모듈 책임·요청 흐름·호환 경계](docs/ARCHITECTURE.md)
-- [계약 OpenAPI](contracts/openapi-1.3.0.json), [계약 SQL](contracts/schema-proposal-1.3.0.sql)
+- [구현된 최종 월 구독형 OpenAPI 명세](contracts/openapi-final-monthly-subscription.yaml), [전체 월 구독형 계약 JSON](contracts/openapi-1.4.0-monthly-subscription.json), [기반 SQL schema proposal](contracts/schema-proposal-1.3.0.sql)
 - [마이그레이션 및 기존 DB 제한](migrations/README.md), [통합 검증 및 미결 정책](docs/INTEGRATION_VALIDATION.md), [과거 B 검증 기록](docs/VALIDATION.md)
 
 CI는 editable install 후 SQLite 회귀와 별도의 disposable MySQL 8.0 검증을 실행하도록 구성되어 있습니다. MySQL fixture는 000–005 체인, 기존 B 데이터 보존, 비어 있지 않은 task 스텁 거부를 확인합니다. 로컬 `TEST_MYSQL_URL`이 없으면 해당 테스트는 명시적으로 skip합니다. 과거 B 전용 SHA의 성공은 현재 통합 SHA나 운영 DB 호환성을 입증하지 않으므로 최종 통합 검증 결과를 별도로 확인해야 합니다.

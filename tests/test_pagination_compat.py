@@ -329,9 +329,7 @@ def test_routes_pass_the_original_envelope_shapes_to_idempotency(monkeypatch):
     explanation = content.ExplanationInput(
         concept_version_id=IDENTITY, explanation_language="ko", model_id="test:grounded"
     )
-    assert (
-        content.create_explanation(explanation, request, KEY, "synthetic-compat-key")["query"] == QUERY_DICT
-    )
+    assert content.create_explanation(explanation, request, KEY)["query"] == QUERY_DICT
     assert captured[-1][1]["body"] == {
         "concept_version_id": IDENTITY,
         "explanation_language": "ko",

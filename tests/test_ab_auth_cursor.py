@@ -191,7 +191,9 @@ def test_optional_email_claims_preserve_identity_and_me_contract(auth_env, signi
     profile = response.json()["data"]
     assert profile["email"] == expected
     contract = json.loads(
-        (Path(__file__).resolve().parents[1] / "contracts" / "openapi-1.3.0.json").read_text(encoding="utf-8")
+        (
+            Path(__file__).resolve().parents[1] / "contracts" / "openapi-1.4.0-monthly-subscription.json"
+        ).read_text(encoding="utf-8")
     )
     Draft202012Validator(
         contract["components"]["schemas"]["UserProfile"], format_checker=FormatChecker()

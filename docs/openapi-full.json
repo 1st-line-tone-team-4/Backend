@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Team4 Learning Backend — implemented contract",
-    "version": "1.3.0-backend-proposal",
-    "description": "Integrated A and B routes. See README for external authentication and deployment prerequisites."
+    "version": "1.4.0-monthly-subscription",
+    "description": "Integrated A and B routes. AI provider credentials are service-managed; payment checkout and subscription entitlement verification remain pending."
   },
   "servers": [
     {
@@ -587,9 +587,6 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/IdempotencyKey"
-          },
-          {
-            "$ref": "#/components/parameters/AIKey"
           }
         ]
       }
@@ -1769,9 +1766,6 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/IdempotencyKey"
-          },
-          {
-            "$ref": "#/components/parameters/AIKey"
           }
         ]
       },
@@ -2248,9 +2242,6 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/IdempotencyKey"
-          },
-          {
-            "$ref": "#/components/parameters/AIKey"
           }
         ]
       }
@@ -2339,9 +2330,6 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/IdempotencyKey"
-          },
-          {
-            "$ref": "#/components/parameters/AIKey"
           }
         ]
       }
@@ -2734,99 +2722,6 @@
         "parameters": []
       }
     },
-    "/ai/validate-key": {
-      "post": {
-        "operationId": "validateAIKey",
-        "description": "유효성 검사만, 앱 DB에 키 저장하지 않음. 실제 생성은 각 요청에 다시 X-AI-Key 전달. provider 권한 오류422 PROVIDER_AUTH. 비용 발생 없는 provider 검증이 불가능하면503 KEY_VALIDATION_UNAVAILABLE, 생성 호출로 몰래 검증하지 않는다.",
-        "responses": {
-          "200": {
-            "description": "성공",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "object",
-                      "properties": {
-                        "valid": {
-                          "type": "boolean"
-                        },
-                        "model_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "valid",
-                        "model_id"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": [
-                    "data"
-                  ],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/Error"
-          },
-          "401": {
-            "$ref": "#/components/responses/Error"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          },
-          "422": {
-            "$ref": "#/components/responses/Error"
-          },
-          "429": {
-            "$ref": "#/components/responses/Error"
-          },
-          "503": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "model_id": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 100
-                  }
-                },
-                "required": [
-                  "model_id"
-                ],
-                "additionalProperties": false
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          },
-          {
-            "$ref": "#/components/parameters/AIKey"
-          }
-        ]
-      }
-    },
     "/jobs/{jobId}": {
       "parameters": [
         {
@@ -2841,7 +2736,7 @@
       ],
       "get": {
         "operationId": "getJob",
-        "description": "본인job, polling 최소2초/429 Retry-After. succeeded.result_url은 본인 GET결과. failed.retryable=true+attempt_no<3은retry; 그외failed/outcome_unknown은restart에새키+비용가능성동의. outcome_unknown자동재시도금지. 실패와 미확정은완료로표시하지않음. learning_explanation 성공의 result_url은 /v1/learning-explanations/{resource_id}; owner 보호 GET이며 사설 자료 외부 URL을 반환하지 않는다.",
+        "description": "본인job, polling 최소2초/429 Retry-After. succeeded.result_url은 본인 GET결과. failed.retryable=true+attempt_no<3은retry; 그외failed/outcome_unknown은restart 시 중복 실행 가능성에 대한 명시적 동의. outcome_unknown자동재시도금지. 실패와 미확정은완료로표시하지않음. learning_explanation 성공의 result_url은 /v1/learning-explanations/{resource_id}; owner 보호 GET이며 사설 자료 외부 URL을 반환하지 않는다.",
         "responses": {
           "200": {
             "description": "성공",
@@ -2904,7 +2799,7 @@
       ],
       "post": {
         "operationId": "retryJob",
-        "description": "failed+retryable=true, attempt_no<3만 허용. 같은 job ID attempt_no+1 원자 증가. 같은 모델만 허용. 키 재입력 필요. 과금 발생 전 확정된 credential/auth/rate_limit/unavailable 실패만 retryable. output/timeout/internal은 false. 실행 중 또는 성공한 job 재실행409. 동일하게현재resource.latest job검사와행잠금,후속전이금지. material/set/attempt실패상태,message sessionactive,report sessionreport_pending만. stale409. learning_explanation은 현재 latest_job_id이고 explanation.status=failed일 때만 같은 job의 attempt를 증가시키며 generating으로 복구한다. 저장 입력/버전/언어/모델은 불변, ready 및 outcome_unknown은 retry 금지.",
+        "description": "failed+retryable=true, attempt_no<3만 허용. 같은 job ID attempt_no+1 원자 증가. 같은 모델만 허용. 서비스 관리 제공자 키를 사용한다. provider 호출 전에 확정된 인증·rate limit·서비스 장애만 retryable. output/timeout/internal은 false. 실행 중 또는 성공한 job 재실행409. 동일하게현재resource.latest job검사와행잠금,후속전이금지. material/set/attempt실패상태,message sessionactive,report sessionreport_pending만. stale409. learning_explanation은 현재 latest_job_id이고 explanation.status=failed일 때만 같은 job의 attempt를 증가시키며 generating으로 복구한다. 저장 입력/버전/언어/모델은 불변, ready 및 outcome_unknown은 retry 금지.",
         "responses": {
           "202": {
             "description": "성공",
@@ -2974,9 +2869,6 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/IdempotencyKey"
-          },
-          {
-            "$ref": "#/components/parameters/AIKey"
           }
         ]
       }
@@ -3226,7 +3118,7 @@
     "/question-sets": {
       "post": {
         "operationId": "createQuestionSet",
-        "description": "기존 /questions/generate 대체(1.2 breaking). unit·confirmed version·task는 같은 소유자/자료. task 있을 때 solve 및 정확한 버전 집합 일치, count는 남은목표 이하. set 생성 후 job.resource_id=set.id. 고정 ordinal1..count, 새 difficulty/count는 새 set. 같은 unit+version집합+task+count+difficulty의 활성job은409 JOB_IN_PROGRESS; outcome_unknown 전작업 존재 시 acknowledge_possible_duplicate_cost=true 없으면409 POSSIBLE_DUPLICATE_COST. 결과 atomic 저장.",
+        "description": "기존 /questions/generate 대체(1.2 breaking). unit·confirmed version·task는 같은 소유자/자료. task 있을 때 solve 및 정확한 버전 집합 일치, count는 남은목표 이하. set 생성 후 job.resource_id=set.id. 고정 ordinal1..count, 새 difficulty/count는 새 set. 같은 unit+version집합+task+count+difficulty의 활성job은409 JOB_IN_PROGRESS; outcome_unknown 전작업 존재 시 acknowledge_possible_duplicate_execution=true 없으면409 DUPLICATE_EXECUTION_ACK_REQUIRED. 결과 atomic 저장.",
         "responses": {
           "202": {
             "description": "성공",
@@ -3321,7 +3213,7 @@
                     "minLength": 1,
                     "maxLength": 100
                   },
-                  "acknowledge_possible_duplicate_cost": {
+                  "acknowledge_possible_duplicate_execution": {
                     "type": "boolean",
                     "default": false
                   }
@@ -3341,9 +3233,6 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/IdempotencyKey"
-          },
-          {
-            "$ref": "#/components/parameters/AIKey"
           }
         ]
       },
@@ -3834,6 +3723,78 @@
         ]
       }
     },
+    "/billing/capabilities": {
+      "get": {
+        "operationId": "getBillingCapabilities",
+        "description": "월 구독 방식의 현재 제공 정책을 조회한다. 가격이 확정되고 결제·구독 연동이 완료되기 전까지 checkout_enabled=false이며 subscription_status=pricing_pending이다.",
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "const": "monthly_subscription"
+                        },
+                        "subscription_status": {
+                          "type": "string",
+                          "const": "pricing_pending"
+                        },
+                        "checkout_enabled": {
+                          "type": "boolean",
+                          "const": false
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "subscription_status",
+                        "checkout_enabled"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": []
+      }
+    },
     "/jobs/{jobId}/restart": {
       "parameters": [
         {
@@ -3848,7 +3809,7 @@
       ],
       "post": {
         "operationId": "restartTerminalJob",
-        "description": "failed(재시도불가 또는3회소진) 또는 outcome_unknown 복구. 같은 model·resource·저장입력을 사용하여 새 job(previous_job_id=old.id,attempt_no=1)을 생성하고 resource.job_id를 교체; 새키와 중복provider과금가능성 명시동의true 필수. 이전job별 successor1개 UNIQUE. 전job은 terminal 불변, 늦은응답의 commit fencing 차단. analysis material→queued, set→generating, attempt→grading, report session→report_pending; message는 기존user message 재사용하며 새user message 생성안함. queued/running/succeeded/retryable failed(3회미만)는409. POST멱등원자트랜잭션. 사용자는 강제재시작 대신 기존실패이력 남기고 다른학습으로 이동가능. 필수사전조건: resource행을잠그고 old.id=현재latest_job_id(또는set/attempt.job_id),successor없음,다른activejob없음 검사. material=failed,set=failed,attempt=failed,message는session=active,report는session=report_pending만. 새메시지/완료/포기/성공 등후속전이가있으면409 STALE_JOB;과거실패job 부활금지. unknown은관련material/set/attempt를failed로표시하되job은outcome_unknown유지. restart원자transaction에서latest pointer교체. learning_explanation은 latest_job_id가 일치하는 failed 또는 outcome_unknown 리소스만 허용하며 새 job으로 포인터 교체와 generating 복구를 원자 수행한다. 같은 version/언어/모델/저장입력을 유지한다. ready 결과는 재시작/덮어쓰기 금지.",
+        "description": "failed(재시도불가 또는3회소진) 또는 outcome_unknown 복구. 같은 model·resource·저장입력을 사용하여 새 job(previous_job_id=old.id,attempt_no=1)을 생성하고 resource.job_id를 교체; 서비스 관리 제공자 키를 사용하며 중복 AI 실행 가능성에 대한 명시 동의가 필요. 이 동의는 사용자에게 별도 결제를 청구한다는 뜻이 아니다. 이전job별 successor1개 UNIQUE. 전job은 terminal 불변, 늦은응답의 commit fencing 차단. analysis material→queued, set→generating, attempt→grading, report session→report_pending; message는 기존user message 재사용하며 새user message 생성안함. queued/running/succeeded/retryable failed(3회미만)는409. POST멱등원자트랜잭션. 사용자는 강제재시작 대신 기존실패이력 남기고 다른학습으로 이동가능. 필수사전조건: resource행을잠그고 old.id=현재latest_job_id(또는set/attempt.job_id),successor없음,다른activejob없음 검사. material=failed,set=failed,attempt=failed,message는session=active,report는session=report_pending만. 새메시지/완료/포기/성공 등후속전이가있으면409 STALE_JOB;과거실패job 부활금지. unknown은관련material/set/attempt를failed로표시하되job은outcome_unknown유지. restart원자transaction에서latest pointer교체. learning_explanation은 latest_job_id가 일치하는 failed 또는 outcome_unknown 리소스만 허용하며 새 job으로 포인터 교체와 generating 복구를 원자 수행한다. 같은 version/언어/모델/저장입력을 유지한다. ready 결과는 재시작/덮어쓰기 금지.",
         "responses": {
           "202": {
             "description": "성공",
@@ -3906,14 +3867,14 @@
                     "minLength": 1,
                     "maxLength": 100
                   },
-                  "acknowledge_possible_duplicate_cost": {
+                  "acknowledge_possible_duplicate_execution": {
                     "type": "boolean",
                     "const": true
                   }
                 },
                 "required": [
                   "model_id",
-                  "acknowledge_possible_duplicate_cost"
+                  "acknowledge_possible_duplicate_execution"
                 ],
                 "additionalProperties": false
               }
@@ -3923,9 +3884,6 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/IdempotencyKey"
-          },
-          {
-            "$ref": "#/components/parameters/AIKey"
           }
         ]
       }
@@ -4030,13 +3988,10 @@
       "post": {
         "operationId": "createLearningExplanation",
         "summary": "강의자료 기반 학습 설명 생성",
-        "description": "강의자료에 근거한 독립 자습 설명을 비동기로 생성한다. 소유 confirmed concept_version_id만 받으며 과거 confirmed 버전도 허용한다(초기 draft는422 CONCEPT_NOT_CONFIRMED). version→concept→material 소유권 및 ready/not archived 상태를 검사한다(타인/없음404, 본인 상태 부적합422). 버전의 요약/체크리스트/근거 청크를 고정 입력으로 사용하며 요청에 임의 source/text를 받지 않는다. LearningExplanation과 kind/resource_type=learning_explanation Job을 한 트랜잭션에서 생성하고202 Accepted.job.resource_id로 설명ID를 제공한다. 같은 멱등키는 같은 응답/job을 재생하고 다른 본문은409. owner+concept_version_id+explanation_language+model_id fingerprint의 활성 작업 중복은409 JOB_IN_PROGRESS. 제품 과금 방침은 월 구독이며 독립 자습 설명의 신규 생성마다 추가 비용 동의를 요구하지 않는다. 저장된 결과 조회는 AI를 호출하지 않는다. 새 멱등키의 POST는 사용자의 명시적인 새 설명 생성 요청이다. 이전 설명이 outcome_unknown이어도 신규 생성에 acknowledge_possible_duplicate_cost 필드를 요구하지 않으며 기존 Job은 자동 재호출하지 않는다. 현재 X-AI-Key의 BYOK 전달 계약은 유지하고 외부 provider API 비용은 앱 구독과 별개다. 이 결정은 독립 자습 설명의 신규 생성에 한정하며 공통 /jobs의 retry/restart, 문제 생성 R1과 공개 동의 규칙은 유지한다. 월 구독 결제·권한 검증 API를 구현했다는 뜻은 아니다. queued/running은 status=generating, succeeded는ready, 확정실패는failed, 호출결과불명은outcome_unknown. ready 이전 content/generated_at은null이며 실패 원인은 latest_job_id로 조회한다. 검증된 본문·근거·ready와 job.succeeded를 fencing+latest pointer 검사 후 원자 저장한다. INVALID_OUTPUT이면 부분 설명을 저장/공개하지 않는다. retry/restart는 기존 /jobs 계약을 따르며 같은 고정버전/언어/모델/입력으로 같은 explanation을 복구한다. 성공 설명을 덮어쓰거나 개념요약·Teach-back·학습완료·coverage를 변경하지 않는다.",
+        "description": "강의자료에 근거한 독립 자습 설명을 비동기로 생성한다. 소유 confirmed concept_version_id만 받으며 과거 confirmed 버전도 허용한다(초기 draft는422 CONCEPT_NOT_CONFIRMED). version→concept→material 소유권 및 ready/not archived 상태를 검사한다(타인/없음404, 본인 상태 부적합422). 버전의 요약/체크리스트/근거 청크를 고정 입력으로 사용하며 요청에 임의 source/text를 받지 않는다. LearningExplanation과 kind/resource_type=learning_explanation Job을 한 트랜잭션에서 생성하고202 Accepted.job.resource_id로 설명ID를 제공한다. 같은 멱등키는 같은 응답/job을 재생하고 다른 본문은409. owner+concept_version_id+explanation_language+model_id fingerprint의 활성 작업 중복은409 JOB_IN_PROGRESS. 제품 과금 방침은 월 구독이며 독립 자습 설명의 신규 생성마다 추가 비용 동의를 요구하지 않는다. 저장된 결과 조회는 AI를 호출하지 않는다. 새 멱등키의 POST는 사용자의 명시적인 새 설명 생성 요청이다. 이전 설명이 outcome_unknown이어도 신규 생성에 acknowledge_possible_duplicate_execution 필드를 요구하지 않으며 기존 Job은 자동 재호출하지 않는다. AI 제공자 키는 서비스 Secret Manager에서 공급하며 클라이언트 요청에 포함하지 않는다. 독립 자습 설명과 다른 AI 생성 API는 앱 구독 범위에서 처리한다. 공통 /jobs의 retry/restart 상태 안전 규칙, 문제 생성 중복 요청 보호와 공개 동의는 유지한다. checkout과 유료 구독 권한 검증은 결제 연동 후속 범위다. queued/running은 status=generating, succeeded는ready, 확정실패는failed, 호출결과불명은outcome_unknown. ready 이전 content/generated_at은null이며 실패 원인은 latest_job_id로 조회한다. 검증된 본문·근거·ready와 job.succeeded를 fencing+latest pointer 검사 후 원자 저장한다. INVALID_OUTPUT이면 부분 설명을 저장/공개하지 않는다. retry/restart는 기존 /jobs 계약을 따르며 같은 고정버전/언어/모델/입력으로 같은 explanation을 복구한다. 성공 설명을 덮어쓰거나 개념요약·Teach-back·학습완료·coverage를 변경하지 않는다.",
         "parameters": [
           {
             "$ref": "#/components/parameters/IdempotencyKey"
-          },
-          {
-            "$ref": "#/components/parameters/AIKey"
           }
         ],
         "requestBody": {
@@ -4125,7 +4080,7 @@
       "get": {
         "operationId": "listLearningExplanations",
         "summary": "고정 개념 버전의 학습 설명 목록",
-        "description": "본인 concept_version_id 필수. 타인/없는 버전404; 본인 버전의 모든 생성 상태를 created_at DESC,id DESC로 cursor 페이지 조회한다. 새 개념 버전으로 자동 대체하지 않는다. 실패 기록도 재진입 가능하며 빈 목록은data=[],next_cursor=null. archived 자료의 기존 설명도 본인만 조회 가능. 조회는 AI/BYOK 호출 없음.",
+        "description": "본인 concept_version_id 필수. 타인/없는 버전404; 본인 버전의 모든 생성 상태를 created_at DESC,id DESC로 cursor 페이지 조회한다. 새 개념 버전으로 자동 대체하지 않는다. 실패 기록도 재진입 가능하며 빈 목록은data=[],next_cursor=null. archived 자료의 기존 설명도 본인만 조회 가능. 조회는 AI 호출 없음.",
         "parameters": [
           {
             "name": "concept_version_id",
@@ -4397,19 +4352,7 @@
           "minLength": 16,
           "maxLength": 128
         },
-        "description": "POST 필수. (user,operation,key) 24시간 보존. 동일 본문은 동일 HTTP status/body/job ID 반환. 다른 본문409 IDEMPOTENCY_CONFLICT. 키 자체는 비밀이 아니며 요청 hash에서 X-AI-Key 제외. 진행 중 요청은409 REQUEST_IN_PROGRESS+Retry-After. 응답 저장과 도메인 변경은 한 트랜잭션. 요청 hash에는 HTTP method+canonical path(path parameter 실제값)+canonical JSON+model_id 포함; query가 있으면 정렬하여 포함. 같은키로 다른 resourceId 요청409. raw키 제외."
-      },
-      "AIKey": {
-        "name": "X-AI-Key",
-        "in": "header",
-        "required": true,
-        "schema": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 512,
-          "writeOnly": true
-        },
-        "description": "BYOK 키. TLS만 허용, 로그/트레이스/응답/멱등본문에 기록 금지. 브라우저 메모리만 보관. 비동기 worker 전달용 AES-GCM 암호문은 별도 TTL 저장소에 최대15분, 성공/실패 시 즉시 폐기. TTL 만료 시 job failed/CREDENTIAL_EXPIRED. retry는 새 키 재입력. provider endpoint는 서버 허용목록으로 고정."
+        "description": "POST 필수. (user,operation,key) 24시간 보존. 동일 본문은 동일 HTTP status/body/job ID 반환. 다른 본문409 IDEMPOTENCY_CONFLICT. 키 자체는 비밀이 아니며 서버 관리 비밀은 요청 hash에 포함하지 않는다. 진행 중 요청은409 REQUEST_IN_PROGRESS+Retry-After. 응답 저장과 도메인 변경은 한 트랜잭션. 요청 hash에는 HTTP method+canonical path(path parameter 실제값)+canonical JSON+model_id 포함; query가 있으면 정렬하여 포함. 같은키로 다른 resourceId 요청409. raw키 제외."
       }
     },
     "responses": {
@@ -6155,7 +6098,7 @@
               {
                 "type": "string",
                 "enum": [
-                  "CREDENTIAL_EXPIRED",
+                  "CREDENTIAL_UNAVAILABLE",
                   "PROVIDER_AUTH",
                   "PROVIDER_RATE_LIMIT",
                   "PROVIDER_UNAVAILABLE",
@@ -7280,13 +7223,13 @@
     "VERSION_CONFLICT": "409 base_version불일치",
     "MATERIAL_IN_USE": "409 삭제대신archive",
     "REPORT_NOT_READY": "409 보고서대기/실패",
-    "POSSIBLE_DUPLICATE_COST": "409 명시동의필요",
+    "DUPLICATE_EXECUTION_ACK_REQUIRED": "409 outcome_unknown 작업의 중복 AI 실행 명시 동의 필요(사용자 추가 결제 아님)",
     "RESOURCE_LIMIT_REACHED": "422 parent상한",
-    "PROVIDER_AUTH": "422 key권한",
-    "KEY_VALIDATION_UNAVAILABLE": "503 무과금검증미지원",
+    "PROVIDER_AUTH": "422 서비스 제공자 credential 거부/설정 오류",
     "RATE_LIMITED": "429 Retry-After",
     "EXAM_TOO_FAR": "422 계획생성범위초과",
-    "EXAM_PASSED": "422 시험일지남"
+    "EXAM_PASSED": "422 시험일지남",
+    "AI_NOT_CONFIGURED": "503 요청 모델에 대응하는 서비스 제공자 키 또는 AI provider 구성이 없음"
   },
   "x-change-log": [
     {
@@ -7301,6 +7244,11 @@
       "at": "2026-10-31",
       "version": "1.3.0-backend-proposal",
       "change": "사용자 피드백 4건: /today days_remaining와 task 표시정보; 개념요약/Teach-back과 별도 학습설명 생성/조회; verified_score 명명 DTO·실제 verified 예제·최소공개; publication 성공 consent_public=true 및 const 제약. 기존 크레딧 폐지/daily_minutes 삭제 유지."
+    },
+    {
+      "at": "2026-11-13",
+      "version": "1.4.0-monthly-subscription",
+      "change": "사용자 확인으로 사용자 AI 키 헤더와 키 검증 API 제거; 서비스 관리 provider 키 사용 계약, 월 구독 capability 및 결제 연동 대기 상태 반영"
     }
   ]
 }

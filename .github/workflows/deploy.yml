@@ -1,0 +1,77 @@
+name: Deploy backend
+
+# CI/CD: every push to main is tested and then deployed to the team server
+# over SSH (also runnable by hand via workflow_dispatch).
+# Repository variables: DEPLOY_HOST (server address), DEPLOY_USER (ssh user)
+# Repository secret:    DEPLOY_SSH_KEY (private key for DEPLOY_USER)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - run: python -m pip install -r requirements.lock
+      - run: python -m pip install --no-deps -e .
+      - run: python -m ruff check app src tests scripts
+      - run: python -m pytest -q --ignore=tests/test_mysql.py
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check deploy secrets
+        env:
+          HOST: ${{ vars.DEPLOY_HOST }}
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          if [ -z "$HOST" ] || [ -z "$KEY" ]; then
+            echo "::error::Set the DEPLOY_HOST variable and the DEPLOY_SSH_KEY secret."
+            exit 1
+          fi
+      - name: Configure SSH
+        env:
+          HOST: ${{ vars.DEPLOY_HOST }}
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -T 15 "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+      - name: Ship and deploy
+        env:
+          HOST: ${{ vars.DEPLOY_HOST }}
+          USER_NAME: ${{ vars.DEPLOY_USER || 'ubuntu' }}
+        run: |
+          git bundle create backend.bundle HEAD
+          SSH="ssh -i $HOME/.ssh/deploy_key -o BatchMode=yes"
+          scp -i ~/.ssh/deploy_key -o BatchMode=yes backend.bundle scripts/deploy/remote_deploy.sh "$USER_NAME@$HOST:/tmp/"
+          $SSH "$USER_NAME@$HOST" "bash /tmp/remote_deploy.sh /tmp/backend.bundle $GITHUB_SHA"
+      - name: Public health check
+        env:
+          HOST: ${{ vars.DEPLOY_HOST }}
+        run: |
+          curl -fsS -m 10 "http://$HOST:8000/health"
+          curl -fsS -m 10 "http://$HOST:8000/openapi.json" | python3 -c "import sys, json; print(json.load(sys.stdin)['info']['version'])"
+      - if: always()
+        run: rm -f ~/.ssh/deploy_key

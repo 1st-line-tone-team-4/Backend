@@ -20,11 +20,9 @@ from tests.mysql_boundary_checks import (
 from tests.support import test_application as make_application
 from tests.review_n_boundary_checks import (
     assert_analysis_preparation_releases_locks,
-    assert_key_validation_releases_transaction,
     assert_mysql_delete_does_not_gap_lock_first_complete,
     assert_unknown_job_audit_survives_material_deletion,
 )
-from tests.test_key_validation_n import assert_key_validation_claim_race
 from tests.ab_support import ab_http_application
 from tests.test_ab_e2e import assert_ab_http_pipeline
 from tests.test_terminal_jobs_n11 import assert_mysql_terminal_history_current_reads
@@ -191,6 +189,8 @@ def mysql_live(tmp_path, monkeypatch):
         with db.engine.begin() as conn:
             _execute_migration(conn, name)
     _assert_b_upgrade_boundary(db)
+    with db.engine.begin() as conn:
+        _execute_migration(conn, "006_mysql_monthly_subscription_error_code.sql")
     with db.engine.connect() as conn:
         column = (
             conn.exec_driver_sql("SHOW COLUMNS FROM learning_explanations LIKE 'content_markdown'")
@@ -233,11 +233,7 @@ def test_mysql_migrations_and_complete_http_pipeline(mysql_live, tmp_path):
     assert_mysql_claim_deadlock(mysql_live)
     e2e.test_complete_content_pipeline_and_a_boundary(mysql_live)
     assert_mysql_unknown_uses_current_read(mysql_live)
-    assert_key_validation_releases_transaction(mysql_live)
     assert_analysis_preparation_releases_locks(mysql_live)
-    owner = mysql_live.auth.tokens["test-owner-token"]
-    assert_key_validation_claim_race(mysql_live.ctx, owner, expired=False)
-    assert_key_validation_claim_race(mysql_live.ctx, owner, expired=True)
     assert_mysql_delete_does_not_gap_lock_first_complete(mysql_live)
     assert_unknown_job_audit_survives_material_deletion(mysql_live)
     assert_mysql_generation_acceptance_after_lock_wait(mysql_live)

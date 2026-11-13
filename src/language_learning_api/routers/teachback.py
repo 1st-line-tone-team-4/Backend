@@ -9,7 +9,6 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.a_gateway import lock_owned_task, task_completed_count
 from app.core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow, request_envelope
-from app.credentials import check_key
 from app.jobs import accepted
 from app.materials import evidence_dto, get_confirmed_version
 from app.models import (
@@ -342,9 +341,6 @@ def list_messages(
 @router.post("/teachback-sessions/{sessionId}/messages", status_code=202)
 def send_message(session_id: Annotated[UUID, Path(alias="sessionId")], body: MessageInput, request: Request):
     ctx, owner = get_context(request), get_user(request)
-    key = check_key(request.headers.get("X-AI-Key"))
-    if key in body.content:
-        raise ApiError(422, "INVALID_REQUEST", "Credentials cannot be included in conversation text.")
 
     def action(db):
         session = owned_session(db, owner, session_id, lock=True)
@@ -375,7 +371,6 @@ def send_message(session_id: Annotated[UUID, Path(alias="sessionId")], body: Mes
             resource_id=session.id,
             payload={"session_id": session.id, "message_id": message.id},
             model_id=body.model_id,
-            ai_key=key,
         )
         message.job_id, session.latest_job_id = job.id, job.id
         db.flush()
@@ -389,7 +384,6 @@ def complete_session(
     session_id: Annotated[UUID, Path(alias="sessionId")], body: CompleteSessionInput, request: Request
 ):
     ctx, owner = get_context(request), get_user(request)
-    key = check_key(request.headers.get("X-AI-Key"))
 
     def action(db):
         session = owned_session(db, owner, session_id, lock=True)
@@ -414,7 +408,6 @@ def complete_session(
             resource_id=session.id,
             payload={"session_id": session.id},
             model_id=body.model_id,
-            ai_key=key,
         )
         session.latest_job_id, session.status = job.id, "report_pending"
         db.flush()

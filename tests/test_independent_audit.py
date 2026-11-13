@@ -184,7 +184,7 @@ def test_cost_acknowledgement_requires_json_boolean():
 
     for value in (1, "true", "yes"):
         with pytest.raises(ValidationError):
-            RestartBody(model_id="x", acknowledge_possible_duplicate_cost=value)
+            RestartBody(model_id="x", acknowledge_possible_duplicate_execution=value)
         with pytest.raises(ValidationError):
             SetInput(
                 unit_id=uid(),
@@ -192,7 +192,7 @@ def test_cost_acknowledgement_requires_json_boolean():
                 count=1,
                 difficulty="easy",
                 model_id="x",
-                acknowledge_possible_duplicate_cost=value,
+                acknowledge_possible_duplicate_execution=value,
             )
 
 
@@ -215,7 +215,7 @@ def _queued_analysis(tmp_path):
             client.put(data["upload_url"], headers={"Content-Type": "text/plain"}, content=text).status_code
             == 204
         )
-        headers.update({"Idempotency-Key": uid(), "X-AI-Key": "test-transient-key"})
+        headers.update({"Idempotency-Key": uid()})
         response = client.post(
             "/v1/materials/" + data["material"]["id"] + "/complete",
             headers=headers,
@@ -247,15 +247,14 @@ def test_cancel_during_provider_call_fences_late_success(tmp_path):
     assert len(env.provider.calls) == 1
 
 
-def test_missing_vault_key_fails_before_provider_dispatch(tmp_path):
+def test_missing_service_key_fails_before_provider_dispatch(tmp_path):
     env, job_id, material_id = _queued_analysis(tmp_path)
-    with env.ctx.db.transaction() as session:
-        env.ctx.credentials.delete(session.get(Job, job_id).credential_ref)
+    env.provider.service_key = lambda model_id: None  # Operator has not configured the key.
     assert env.ctx.jobs.run_once()
     with env.ctx.db.transaction() as session:
         job = session.get(Job, job_id)
         assert job.status == "failed" and job.retryable
-        assert job.error_code == "CREDENTIAL_EXPIRED"
+        assert job.error_code == "CREDENTIAL_UNAVAILABLE"
         assert job.dispatched_at is None and job.credential_ref is None
         assert session.get(Material, material_id).processing_status == "failed"
     assert env.provider.calls == []

@@ -1,8 +1,9 @@
-"""Encrypted, process-shared short-lived BYOK vault, separate from the domain DB.
+"""Legacy encrypted credential vault, retained only to clean up old BYOK jobs.
 
-The deployment must put this SQLite file on private local storage shared by API
-and worker processes and give both the same AES-256 key via a secret manager.
-Rows expire after at most fifteen minutes; purge runs on every vault operation.
+New AI jobs use server-managed provider credentials and never write here. If
+cleaning up jobs created by the former BYOK deployment, API and worker need the
+same AES-256 key from a secret manager. Rows expire after at most fifteen
+minutes; purge runs on every vault operation.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ def check_key(key: str | None) -> str:
         or len(key) > 512
         or any(ord(c) < 33 or ord(c) > 126 for c in key)
     ):
-        raise ApiError(422, "PROVIDER_AUTH", "A valid X-AI-Key header is required.")
+        raise ApiError(503, "AI_NOT_CONFIGURED", "A valid service provider credential is required.")
     return key
 
 
