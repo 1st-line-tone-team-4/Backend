@@ -1,6 +1,6 @@
 # A+B 통합 백엔드 구조
 
-이 문서는 실행 경로와 변경 경계를 빠르게 찾기 위한 소스 지도입니다. 설치는 [README](../README.md), 공개 필드·상태는 [통합 API 안내](API_SPEC_FULL.md)와 [계약 OpenAPI](../contracts/openapi-1.3.0.json)를 기준으로 합니다. 테스트 통과나 이 지도만으로 결함 부재를 보장하지 않습니다.
+이 문서는 실행 경로와 변경 경계를 빠르게 찾기 위한 소스 지도입니다. 설치는 [README](../README.md), 공개 필드·상태는 [통합 API 안내](API_SPEC_FULL.md)와 [구현된 최종 OpenAPI](../contracts/openapi-final-monthly-subscription.yaml)를 기준으로 합니다. 테스트 통과나 이 지도만으로 결함 부재를 보장하지 않습니다.
 
 계약 제안은 **50개 경로 / 64개 작업**, 현재 등록한 계약 API는 **40개 경로 / 51개 작업**입니다. 공개 게시·공개 풀이 생성·점수 인증/관리자 심사·결제 관련 **13개 작업은 미구현**입니다. `/records/public-attempts`는 기존 개인 이력 조회만 제공합니다. `/health`와 서명된 private-storage PUT/GET은 계약 API 집계와 별도입니다.
 
@@ -15,8 +15,8 @@
 | 공유 조회·페이지 | [`app/projections.py`](../app/projections.py): evidence·문제·시도의 응답 변환과 batch loading. [`app/pagination.py`](../app/pagination.py): 기존 세 가지 signed cursor 형식을 유지하는 공통 codec. |
 | A 학습 흐름 | [`routers/`](../src/language_learning_api/routers/): 목표·계획·답안·Teach-back·기록 API. [`services/`](../src/language_learning_api/services/): 채점과 Teach-back의 준비·결과 검증·저장. |
 | A/B 연결 | [`app/a_gateway.py`](../app/a_gateway.py): 실제 계획/task의 소유권·잠금·진도·자료 참조. [`app/ports.py`](../app/ports.py): 주입 가능한 경계이며 미설정 adapter는 task 사용과 위험한 삭제를 허용하지 않습니다. |
-| 작업과 외부 호출 | [`app/jobs.py`](../app/jobs.py): 공통 JobService. [`app/providers.py`](../app/providers.py): 모델 allowlist·요청 제한·provider 응답 검증. [`app/ai_generation.py`](../app/ai_generation.py): `gemini:*` 모델을 팀 AI 서버 내부 API로 보내고 응답을 기존 handler 출력 형식으로 변환(입력 문맥은 [`app/ai_context.py`](../app/ai_context.py)). [`app/key_validation.py`](../app/key_validation.py): 생성과 수명주기가 다른 키 검증 claim. |
-| 파일·비밀값·실행 | `storage`는 private 파일/서명 URL, `extraction`은 제한된 별도 parser 프로세스, `credentials`는 암호화 TTL vault입니다. [`app/worker.py`](../app/worker.py)가 Job과 [`maintenance`](../app/maintenance.py)의 삭제 outbox를 처리합니다. |
+| 작업과 외부 호출 | [`app/jobs.py`](../app/jobs.py): 공통 JobService. [`app/providers.py`](../app/providers.py): 모델 allowlist·요청 제한·provider 응답 검증. [`app/ai_generation.py`](../app/ai_generation.py): 서버 관리 `gemini:*` 모델을 팀 AI 서버 내부 API로 보내고 응답을 기존 handler 출력 형식으로 변환(입력 문맥은 [`app/ai_context.py`](../app/ai_context.py)). |
+| 파일·비밀값·실행 | `storage`는 private 파일/서명 URL, `extraction`은 제한된 별도 parser 프로세스입니다. `credentials`는 이전 BYOK Job 정리 전용 legacy vault이며 신규 Job은 사용하지 않습니다. [`app/worker.py`](../app/worker.py)가 Job과 [`maintenance`](../app/maintenance.py)의 삭제 outbox를 처리합니다. |
 
 공개 게시·점수 인증 테이블의 존재는 해당 비즈니스 API 구현을 의미하지 않습니다. 실험용 A Alembic 이력은 격리되어 있으며 운영 `create_schema()`와 Alembic 실행은 지원 경로가 아닙니다. DB 변경은 [migration 안내](../migrations/README.md)를 따릅니다.
 
@@ -36,22 +36,22 @@ flowchart LR
 
 1. 각 API는 검증된 사용자와 요청 필드를 받고, 도메인에서 소유권·참조 관계·현재 상태를 확인합니다. 소유자 불일치는 리소스를 노출하지 않는 `404`로 처리합니다.
 2. 생성 POST는 `core.idempotent` 안에서 요청 digest와 replay를 확인합니다. 도메인 변경, Job 접수, replay 저장은 같은 transaction입니다. 동일 요청은 재생하고 같은 키의 다른 요청은 충돌합니다. `202`는 결과 완료가 아닙니다.
-3. JobService는 `analysis`, `questions`, `learning_explanation`, `grade`, `message`, `report` handler를 사용합니다. 요청별 AI 키는 도메인 payload에 저장하지 않고 최대 15분 TTL의 암호화 vault 참조로 연결합니다.
+3. JobService는 `analysis`, `questions`, `learning_explanation`, `grade`, `message`, `report` handler를 사용합니다. Provider credentials는 서버 설정/Secret Manager에서만 읽으며, 요청별 사용자 키는 받거나 저장하지 않습니다.
 4. 자료 분석은 **짧은 DB snapshot → transaction 밖 파일 읽기/추출 → snapshot 재검증 → dispatch** 순서입니다. 일반 handler의 `prepare`는 제한된 SQL 입력 준비만 담당합니다. 자료 complete도 파싱 후 최종 transaction에서 상태를 다시 확인합니다.
 5. worker는 provider 호출 전에 dispatch 표시를 commit합니다. 응답 후 lease/fencing token, 소유자, 리소스의 현재 Job 포인터를 다시 확인하고 결과와 Job 상태를 함께 저장합니다. 오래된 worker 결과가 후속 작업을 덮어쓰지 못하게 합니다.
 
-키 검증은 별도 흐름입니다. 짧은 claim을 먼저 commit하고 DB 연결 없이 provider에 확인한 뒤 claim token으로 완료를 fence합니다. 생성 작업의 멱등성 transaction과 기계적으로 합치면 외부 I/O 동안 DB 연결을 보유하게 됩니다.
+`GET /v1/billing/capabilities`는 월 구독 정책과 현재 checkout 가능 여부만 알립니다. 가격·결제·실제 구독 권한 검증은 후속 연동 범위입니다.
 
 ## 유지해야 하는 경계
 
 - **도메인 잠금:** task 변경은 goal → plan → task 순서이며, 연결된 채점/Teach-back은 그 뒤 question/session을 잠급니다. 사전 ID 조회는 잠금 대상을 찾는 용도입니다. 잠금 후 소유권·상태를 다시 확인하고 MySQL current read를 사용합니다. worker의 Job fencing은 이 도메인 검증에 추가됩니다.
 - **진도 조회와 변경:** 화면용 집계는 batch read로 줄일 수 있습니다. 재계획·완료 판단의 authoritative read는 필요한 잠금과 최신 데이터 의미를 유지해야 합니다. SQL 수를 줄이기 위해 일반 snapshot read로 대체하지 않습니다.
 - **고정 버전:** 계획·문제·세션은 확인된 버전을 참조합니다. 최신 버전으로 임의 교체하거나 B 데이터를 A JSON 복제본으로 유지하지 않습니다. 입력 DTO 검사와 저장된 데이터/provider 출력의 관계 검증은 서로 다른 신뢰 경계입니다.
-- **비밀값:** 검증 오류·provider 오류·SQL 예외에 요청 body와 키를 노출하지 않습니다. rollback은 새 vault 항목을 제거하고, 이전 항목의 폐기는 commit 후 수행합니다. commit 결과가 불확실하면 새 항목은 제한된 TTL 안에서 유지합니다.
+- **비밀값:** 검증 오류·provider 오류·SQL 예외에 요청 body와 키를 노출하지 않습니다. Provider credentials는 서버 Secret Manager에서 공급합니다. legacy vault 정리 동작은 기존 BYOK Job 호환용입니다.
 - **삭제:** 자료 참조 확인과 삭제 outbox를 거칩니다. 참조 잠금 경합은 사용 중으로 취급하고, 실제 파일 삭제는 worker가 재실행 가능하게 처리합니다.
 - **테스트 대역:** 인증/provider 대체는 명시적 test profile 주입으로만 허용합니다. 환경 변수만으로 가짜 provider나 인증이 선택되지 않습니다.
 
-`outcome_unknown`은 **실행 중이 아닌 terminal 상태**이며, 외부 실행·비용의 결과가 확정되지 않았다는 뜻입니다. `queued/running`의 busy guard와 재호출 비용 동의는 별도 판단입니다. 자동 재호출하지 않고, retry는 확정된 재시도 가능 실패에만 허용합니다. restart는 새 멱등성 키와 `acknowledge_possible_duplicate_cost=true`, 현재 리소스 검증이 필요합니다. terminal Job과 세션의 `active/report_pending` 상태를 같은 개념으로 취급하지 않습니다.
+`outcome_unknown`은 **실행 중이 아닌 terminal 상태**이며, 외부 실행 결과가 확정되지 않았다는 뜻입니다. 자동 재호출하지 않고, retry는 확정된 재시도 가능 실패에만 허용합니다. restart는 새 멱등성 키와 `acknowledge_possible_duplicate_execution=true`, 현재 리소스 검증이 필요합니다. 동의는 중복 AI 실행 가능성을 알리는 것이며 사용자 추가 결제를 뜻하지 않습니다. terminal Job과 세션의 `active/report_pending` 상태를 같은 개념으로 취급하지 않습니다.
 
 ## 의존성과 구조 정리
 
@@ -79,7 +79,7 @@ flowchart LR
 
 회귀 진입점은 `test_plan_queries_n14.py`와 `test_projections.py`입니다. 남은 조회 후보는 여러 세트에 걸친 페이지 loading, 개념 버전의 checklist/evidence, weakness별 집계, report item별 evidence입니다. 이번 변경으로 모든 N+1 조회가 제거된 것은 아닙니다.
 
-작은 파일이라는 이유로 `key_validation`, `extraction`, `maintenance`, `teachback_prompts`를 합치지 않습니다. 각각 외부 I/O claim, parser 격리, 삭제 재시도, 고정 입력/출력 검증이라는 별도 수명주기를 갖습니다. 공통 repository나 거대한 utility 모듈을 도입하는 것도 현재 정리의 목표가 아닙니다.
+작은 파일이라는 이유로 `extraction`, `maintenance`, `teachback_prompts`를 합치지 않습니다. 각각 parser 격리, 삭제 재시도, 고정 입력/출력 검증이라는 별도 수명주기를 갖습니다. `key_validation.py`와 그 테스트 항목은 이전 BYOK 구현의 기록이며 현재 API에서 호출하지 않습니다. 공통 repository나 거대한 utility 모듈을 도입하는 것도 현재 정리의 목표가 아닙니다.
 
 ## 호환 경로와 실행 경로
 
@@ -117,7 +117,7 @@ python -m pytest -q tests/test_mysql.py
 
 N12: 최신 보고서 Job이 terminal인 `report_pending` 세션은 저장된 보고서가 없으면 포기할 수 있습니다. `queued/running`과 완료 결과는 보호합니다. 포기 PATCH는 반복해도 `200`이고, 비활성 계획·건너뛴 task에서도 정리할 수 있습니다. 대화와 Job 포인터·오류 이력을 보존하며 새 진단 원문이나 비밀정보를 저장하지 않습니다. 포기한 세션의 이전 Job은 retry/restart 및 늦은 결과 저장을 통과하지 못합니다.
 
-N13: 제품은 월 구독 방침이므로 독립 설명의 새 생성에 건별 동의 필드를 추가하지 않습니다. 새 멱등키는 명시적 새 생성 요청이며 같은 키 replay·활성 작업 차단·unknown 자동 재호출 금지는 유지합니다. BYOK의 외부 provider 비용, 공통 restart와 문제 생성 R1, 공개 동의 규칙은 별도입니다. 이 결정이 결제·구독 권한 검증 구현을 뜻하지는 않습니다.
+N13: 제품은 월 구독 방침이므로 독립 설명의 새 생성에 건별 동의 필드를 추가하지 않습니다. 새 멱등키는 명시적 새 생성 요청이며 같은 키 replay·활성 작업 차단·unknown 자동 재호출 금지는 유지합니다. 공통 restart와 문제 생성의 중복 실행 안전장치, 공개 동의 규칙은 별도입니다. 이 결정이 결제·구독 권한 검증 구현을 뜻하지는 않습니다.
 
 | 항목 | 아직 결정하지 않은 범위 |
 | --- | --- |

@@ -1,8 +1,8 @@
 """Durable job state machine with conservative external-call crash recovery.
 
 Dispatch is durably marked before any provider call. Losing a worker after that
-point yields outcome_unknown; only an explicit, cost-acknowledged restart may
-call again. Leases and fencing protect both job and resource writes. There is no
+point yields outcome_unknown; only an explicit, duplicate-execution-acknowledged
+restart may call again. Leases and fencing protect both job and resource writes. There is no
 public cancellation endpoint in the contract. Internal cancel terminalizes a
 queued/pre-dispatch job as failed and a dispatched job as outcome_unknown.
 """
@@ -23,8 +23,6 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from .core import ApiError, get_context, get_user, idempotent, iso, uid, utcnow, request_envelope
-from .credentials import check_key
-from .key_validation import validate_key_request
 from .models import Job, Material, QuestionSet, LearningExplanation, IdempotencyRequest
 from .providers import ProviderFailure
 
@@ -82,18 +80,6 @@ class JobService:
         self.prepare_seconds = prepare_seconds
         self.generation_seconds = generation_seconds
 
-    def _stage_credential(self, session, key):
-        ref = self.ctx.credentials.put(key)
-        try:
-            # A known rollback discards this key immediately. On uncertain
-            # COMMIT acknowledgement retain it until the bounded vault TTL:
-            # even a fresh nonlocking read cannot prove the commit won't land.
-            self.ctx.db.on_transaction_end(session, rollback=lambda: self.ctx.credentials.delete(ref))
-        except BaseException:
-            self.ctx.credentials.delete(ref)
-            raise
-        return ref
-
     def register(self, kind, handler):
         if kind not in ("analysis", "questions", "learning_explanation", "grade", "message", "report"):
             raise ValueError("Unknown contract job kind")
@@ -103,16 +89,10 @@ class JobService:
             )
         self.handlers[kind] = handler
 
-    def enqueue(self, session, *, user_id, kind, resource_type, resource_id, payload, model_id, ai_key):
+    def enqueue(self, session, *, user_id, kind, resource_type, resource_id, payload, model_id):
         self.ctx.providers.ensure_model(model_id)
-        check_key(ai_key)
         if kind not in self.handlers:
             raise ApiError(503, "JOB_HANDLER_UNAVAILABLE", "The requested job handler is unavailable.")
-        serialized = json.dumps(
-            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
-        )
-        if ai_key in serialized:
-            raise ApiError(422, "INVALID_REQUEST", "Credentials cannot be included in persisted input.")
         fingerprint_data = {"kind": kind, "payload": payload}
         if kind != "questions":
             fingerprint_data["model_id"] = model_id
@@ -146,7 +126,7 @@ class JobService:
             fencing_token=0,
             created_at=now,
             updated_at=now,
-            credential_ref=self._stage_credential(session, ai_key),
+            credential_ref=None,
         )
         try:
             # Nested transaction turns active-fingerprint races into a stable 409
@@ -155,7 +135,6 @@ class JobService:
                 session.add(job)
                 session.flush()
         except IntegrityError:
-            self.ctx.credentials.delete(job.credential_ref)
             raise ApiError(409, "JOB_IN_PROGRESS", "An equivalent job is already active.") from None
         return job
 
@@ -203,12 +182,14 @@ class JobService:
         return session.get(Job, job_id, populate_existing=True)
 
     def _secret_cleanup(self, job):
-        self.ctx.credentials.delete(job.credential_ref)
+        if job.credential_ref and self.ctx.credentials:
+            self.ctx.credentials.delete(job.credential_ref)
         job.credential_ref = None
 
     def recover(self):
         """Recover expired leases without ever redispatching an uncertain call."""
-        self.ctx.credentials.purge()
+        if self.ctx.credentials:
+            self.ctx.credentials.purge()
         count = 0
         with self.ctx.db.transaction() as session:
             queue_deadline = utcnow() - timedelta(minutes=10)
@@ -273,7 +254,7 @@ class JobService:
                         self.handlers[job.kind].set_state(session, job, "outcome_unknown")
                     self._secret_cleanup(job)
                 count += 1
-            # Also cleans credentials after a terminal transaction/process crash.
+            # Also cleans legacy credentials after a terminal transaction/process crash.
             for job in session.scalars(
                 select(Job).where(Job.status.in_(TERMINAL), Job.credential_ref.is_not(None))
             ):
@@ -364,9 +345,15 @@ class JobService:
                 self._resource(session, job)
                 if callable(snapshotter):
                     payload = handler.apply_prepared(session, job, prepared)
-                key = self.ctx.credentials.get(job.credential_ref)
-                if key is None:
-                    raise ProviderFailure("CREDENTIAL_EXPIRED", retryable=True)
+                # Discard any credential staged by an older BYOK deployment.
+                # New calls always use a service-owned provider key.
+                if job.credential_ref:
+                    if self.ctx.credentials:
+                        self.ctx.credentials.delete(job.credential_ref)
+                    job.credential_ref = None
+                key = self.ctx.providers.service_key(model_id)
+                if not key:
+                    raise ProviderFailure("PROVIDER_UNAVAILABLE")
                 self.ctx.providers.ensure_model(model_id)
                 preflight = getattr(self.ctx.providers, "preflight", None)
                 if callable(preflight):
@@ -431,7 +418,7 @@ class JobService:
             raise ApiError(404, "NOT_FOUND", "Job not found.")
         return session.get(Job, job_id, populate_existing=True)
 
-    def retry(self, session, *, job_id, user_id, model_id, ai_key):
+    def retry(self, session, *, job_id, user_id, model_id):
         job = self._locked_owned(session, job_id, user_id)
         if job.status != "failed" or not job.retryable or job.attempt_no >= 3:
             raise ApiError(409, "JOB_NOT_RETRYABLE", "The job cannot be retried.")
@@ -439,10 +426,10 @@ class JobService:
             raise ApiError(409, "MODEL_MISMATCH", "Retry must use the original model.")
         self.ctx.providers.ensure_model(model_id)
         self._resource(session, job, require_failed=True)
-        ref = self._stage_credential(session, ai_key)
         previous_ref = job.credential_ref
-        self.ctx.db.on_transaction_end(session, commit=lambda: self.ctx.credentials.delete(previous_ref))
-        job.credential_ref = ref
+        if previous_ref and self.ctx.credentials:
+            self.ctx.db.on_transaction_end(session, commit=lambda: self.ctx.credentials.delete(previous_ref))
+        job.credential_ref = None
         job.status, job.retryable, job.error_code = "queued", False, None
         job.attempt_no += 1
         job.fencing_token += 1
@@ -452,12 +439,12 @@ class JobService:
         session.flush()
         return job
 
-    def restart(self, session, *, job_id, user_id, model_id, ai_key, acknowledge_possible_duplicate_cost):
-        if acknowledge_possible_duplicate_cost is not True:
+    def restart(self, session, *, job_id, user_id, model_id, acknowledge_possible_duplicate_execution):
+        if acknowledge_possible_duplicate_execution is not True:
             raise ApiError(
                 422,
-                "COST_ACKNOWLEDGEMENT_REQUIRED",
-                "Explicit possible duplicate cost acknowledgement is required.",
+                "DUPLICATE_EXECUTION_ACK_REQUIRED",
+                "Explicit acknowledgement of possible duplicate AI execution is required.",
             )
         old = self._locked_owned(session, job_id, user_id)
         eligible = old.status == "outcome_unknown" or (
@@ -478,7 +465,6 @@ class JobService:
             resource_id=old.resource_id,
             payload=old.request_payload,
             model_id=model_id,
-            ai_key=ai_key,
         )
         job.previous_job_id = old.id
         setattr(resource, pointer, job.id)
@@ -511,9 +497,9 @@ class ModelBody(BaseModel):
 
 
 class RestartBody(ModelBody):
-    acknowledge_possible_duplicate_cost: StrictBool
+    acknowledge_possible_duplicate_execution: StrictBool
 
-    @field_validator("acknowledge_possible_duplicate_cost")
+    @field_validator("acknowledge_possible_duplicate_execution")
     @classmethod
     def require_acknowledgement(cls, value):
         if value is not True:
@@ -529,21 +515,6 @@ def request_data(request, body):
 def list_models(request: Request):
     get_user(request)
     return {"data": get_context(request).providers.list_models()}
-
-
-@router.post("/ai/validate-key")
-def validate_key(body: ModelBody, request: Request):
-    ctx, owner = get_context(request), get_user(request)
-    key = check_key(request.headers.get("X-AI-Key"))
-
-    return validate_key_request(
-        ctx,
-        owner,
-        body.model_id,
-        key,
-        request.headers.get("Idempotency-Key"),
-        request_data(request, body),
-    )
 
 
 @router.get("/jobs/{job_id}")
@@ -589,10 +560,9 @@ def get_job(job_id: UUID, request: Request):
 @router.post("/jobs/{job_id}/retry")
 def retry_job(job_id: UUID, body: ModelBody, request: Request):
     ctx, owner = get_context(request), get_user(request)
-    key = check_key(request.headers.get("X-AI-Key"))
 
     def action(session):
-        job = ctx.jobs.retry(session, job_id=str(job_id), user_id=owner, model_id=body.model_id, ai_key=key)
+        job = ctx.jobs.retry(session, job_id=str(job_id), user_id=owner, model_id=body.model_id)
         return 202, accepted(job)
 
     return idempotent(
@@ -603,12 +573,10 @@ def retry_job(job_id: UUID, body: ModelBody, request: Request):
 @router.post("/jobs/{job_id}/restart")
 def restart_job(job_id: UUID, body: RestartBody, request: Request):
     ctx, owner = get_context(request), get_user(request)
-    key = check_key(request.headers.get("X-AI-Key"))
     idem_key = request.headers.get("Idempotency-Key")
 
     def action(session):
-        # A restart requires a fresh key, not one already used for an earlier job
-        # mutation. Same restart request still replays through idempotent().
+        # A restart needs a fresh idempotency key. Same-key replay is handled by idempotent().
         reused = session.scalar(
             select(IdempotencyRequest).where(
                 IdempotencyRequest.user_id == owner,
@@ -623,8 +591,7 @@ def restart_job(job_id: UUID, body: RestartBody, request: Request):
             job_id=str(job_id),
             user_id=owner,
             model_id=body.model_id,
-            ai_key=key,
-            acknowledge_possible_duplicate_cost=body.acknowledge_possible_duplicate_cost,
+            acknowledge_possible_duplicate_execution=body.acknowledge_possible_duplicate_execution,
         )
         return 202, accepted(job)
 

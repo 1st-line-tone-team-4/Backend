@@ -2,10 +2,8 @@
 
 Models listed in ``AI_SERVICE_MODELS`` (``gemini:<model>``) are served by the AI
 server's synchronous ``/internal/*`` endpoints. OpenAI/Anthropic models keep the
-existing fixed-endpoint adapters in ``app.providers``. The public API contract
-does not change: this module maps each job kind's backend payload to the AI
-server request and maps the response back to the exact output shape the
-existing handlers already validate and persist.
+fixed-endpoint adapters in ``app.providers``. Provider credentials are loaded
+from server configuration and are never supplied by learners.
 
 - The AI server owns prompts, evidence checks and the provider SDK. It never
   reads our DB, so handlers attach ``payload["ai_context"]`` (see app.ai_context).
@@ -14,7 +12,7 @@ existing handlers already validate and persist.
 - Requests are never retried here; the job engine decides retry/restart and
   ambiguous failures become ``outcome_unknown`` (no silent duplicate cost).
 - The AI server has no text teach-back reply endpoint (it is voice-only by
-  design), so the ``message`` kind calls Gemini directly with the same BYOK key
+  design), so the ``message`` kind calls Gemini directly with the service key
   and the backend's existing teach-back prompt. Replace it once the AI server
   offers a text reply endpoint.
 """
@@ -373,13 +371,14 @@ class AiServerProvider:
     MAX_ERROR_BYTES = 64 * 1024
     # JobService allows 300 s per provider call; keep a margin for persistence.
     GENERATION_TIMEOUT_SECONDS = 290
-    KEY_VALIDATION_TIMEOUT_SECONDS = 20
     MIN_QUESTION_COUNT = 5
     ANALYSIS_MAX_CALLS = 12
 
     def __init__(self, base_url, api_key, models, *, transport=None, profile=None, teachback=None):
         self.base_url = validate_service_config(base_url, api_key, transport=transport, profile=profile)
         self.api_key = api_key
+        self.profile = profile
+        self.provider_key = ""
         self.transport = transport
         self.models = tuple(models)
         if not self.models or len(self.models) > 100 or len(set(self.models)) != len(self.models):
@@ -400,22 +399,36 @@ class AiServerProvider:
             return None
         if not getattr(settings, "ai_service_url", ""):
             raise ValueError("AI_SERVICE_MODELS requires AI_SERVICE_URL")
-        return cls(settings.ai_service_url, settings.ai_service_api_key, models, profile=settings.profile)
+        instance = cls(settings.ai_service_url, settings.ai_service_api_key, models, profile=settings.profile)
+        instance.provider_key = getattr(settings, "gemini_api_key", "") or ""
+        return instance
 
     def handles_model(self, model_id):
         return model_id in self.models
 
     def list_models(self):
         return [
-            {"id": model, "provider": "gemini", "label": model.split(":", 1)[1], "available": True}
+            {
+                "id": model,
+                "provider": "gemini",
+                "label": model.split(":", 1)[1],
+                "available": bool(self.provider_key),
+            }
             for model in self.models
         ]
+
+    def service_key(self, model_id):
+        return self.provider_key or None
 
     def ensure_model(self, model_id):
         if model_id not in self.models:
             raise ApiError(422, "MODEL_UNAVAILABLE", "The requested model is not enabled.")
+        if self.profile != "test" and not self.service_key(model_id):
+            raise ApiError(503, "AI_NOT_CONFIGURED", "The requested AI model is not configured.")
 
     def _exchange(self, path, content, key, timeout_seconds):
+        # This is a private service-to-service call. ``key`` comes from the
+        # backend's GEMINI_API_KEY secret, never from a learner request.
         headers = {
             "X-AI-API-Key": self.api_key,
             "Accept-Encoding": "identity",
@@ -439,31 +452,6 @@ class AiServerProvider:
                         break
                     content.extend(chunk)
                 return response.status_code, bytes(content)
-
-    def validate_key(self, model_id, key):
-        self.ensure_model(model_id)
-        check_key(key)
-        try:
-            status, content = self._exchange(
-                "/internal/models/validate-key",
-                _encode({"model_id": model_id}),
-                key,
-                self.KEY_VALIDATION_TIMEOUT_SECONDS,
-            )
-        except (httpx.HTTPError, ProviderFailure):
-            raise ApiError(
-                503, "KEY_VALIDATION_UNAVAILABLE", "Non-generating key validation is unavailable."
-            ) from None
-        if status == 422 and _error_code(content) == "PROVIDER_AUTH":
-            raise ApiError(422, "PROVIDER_AUTH", "The provider rejected the credential.")
-        if status == 200:
-            try:
-                body = strict_json(content)
-                if body.get("valid") is True and body.get("model_id") == model_id:
-                    return {"valid": True, "model_id": model_id}
-            except (ValueError, AttributeError):
-                pass
-        raise ApiError(503, "KEY_VALIDATION_UNAVAILABLE", "Non-generating key validation is unavailable.")
 
     def _build(self, model_id, kind, payload):
         builder = BUILDERS.get(kind)
@@ -514,7 +502,7 @@ class AiServerProvider:
 
 
 class GeminiTeachbackClient:
-    """Stopgap for the ``message`` kind: one learner question per call, BYOK key."""
+    """Stopgap for the ``message`` kind, authenticated with the server Gemini key."""
 
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
     TIMEOUT_SECONDS = 120
@@ -632,8 +620,8 @@ class CompositeProviders:
     def ensure_model(self, model_id):
         self._route(model_id).ensure_model(model_id)
 
-    def validate_key(self, model_id, key):
-        return self._route(model_id).validate_key(model_id, key)
+    def service_key(self, model_id):
+        return self._route(model_id).service_key(model_id)
 
     def preflight(self, model_id, kind, payload):
         target = self._route(model_id)

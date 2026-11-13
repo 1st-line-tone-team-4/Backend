@@ -1,5 +1,7 @@
 # A+B integration verification
 
+> **역사적 검증 기록:** 이 문서는 통합 초기의 1.3 계약과 당시 미구현 경로를 기록합니다. 이후 월 구독형 1.4 계약에서 `GET /billing/capabilities`를 추가하고 `POST /ai/validate-key`를 제거했습니다. 현재 API 목록과 동작은 [API_SPEC_FULL.md](API_SPEC_FULL.md) 및 [openapi-1.4.0-monthly-subscription.json](../contracts/openapi-1.4.0-monthly-subscription.json)을 기준으로 확인하세요.
+
 Integration branch: `integration/a-b-20261101`.
 
 Preserved inputs: B `4e6752fb40e759774221520a2e28ef5f7f13c19a` and A `7d237ae8c3ad911eb55cc3dd05565376de79c01d`. Their original branches and authorship remain intact. This branch joins the implementations; it does not deploy or merge into main.

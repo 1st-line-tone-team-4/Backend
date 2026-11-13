@@ -46,7 +46,7 @@ class SetInput(Strict):
     count: int = Field(ge=1, le=20, strict=True)
     difficulty: Literal["easy", "medium", "hard"]
     model_id: str = Field(min_length=1, max_length=100)
-    acknowledge_possible_duplicate_cost: StrictBool = False
+    acknowledge_possible_duplicate_execution: StrictBool = False
 
 
 class ExplanationInput(Strict):
@@ -207,7 +207,6 @@ def create_set(
     body: SetInput,
     request: Request,
     idempotency_key: str = Header(alias="Idempotency-Key"),
-    ai_key: str = Header(alias="X-AI-Key"),
 ):
     ctx, user = get_context(request), get_user(request)
     data = body.model_dump(mode="json")
@@ -268,8 +267,12 @@ def create_set(
             raise ApiError(409, "JOB_IN_PROGRESS", "A matching job is already active.")
         # A successor does not establish whether the original call was billed.
         # Contract 1.3 requires fresh acknowledgement while an unknown remains.
-        if matching_jobs and not data["acknowledge_possible_duplicate_cost"]:
-            raise ApiError(409, "POSSIBLE_DUPLICATE_COST", "The previous outcome is unknown.")
+        if matching_jobs and not data["acknowledge_possible_duplicate_execution"]:
+            raise ApiError(
+                409,
+                "DUPLICATE_EXECUTION_ACK_REQUIRED",
+                "The previous AI call outcome is unknown; acknowledge a possible duplicate execution.",
+            )
         job = ctx.jobs.enqueue(
             session,
             user_id=user,
@@ -278,7 +281,6 @@ def create_set(
             resource_id=rid,
             payload=payload,
             model_id=data["model_id"],
-            ai_key=ai_key,
         )
         s = QuestionSet(
             id=rid,
@@ -354,7 +356,6 @@ def create_explanation(
     body: ExplanationInput,
     request: Request,
     idempotency_key: str = Header(alias="Idempotency-Key"),
-    ai_key: str = Header(alias="X-AI-Key"),
 ):
     ctx, user = get_context(request), get_user(request)
     data = body.model_dump(mode="json")
@@ -387,7 +388,6 @@ def create_explanation(
             resource_id=rid,
             payload=payload,
             model_id=data["model_id"],
-            ai_key=ai_key,
         )
         session.add(
             LearningExplanation(

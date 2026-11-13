@@ -30,8 +30,8 @@ def build_context(
         raise ValueError("Production schema changes require reviewed migrations")
     if not settings.database_url or not settings.storage_root:
         raise ValueError("DATABASE_URL and STORAGE_ROOT are required")
-    if len(settings.signing_secret.encode()) < 32 or not settings.credential_encryption_key:
-        raise ValueError("Externally supplied storage signing and credential encryption keys are required")
+    if len(settings.signing_secret.encode()) < 32:
+        raise ValueError("An externally supplied storage signing key is required")
     if settings.profile == "production" and not settings.database_url.startswith("mysql+pymysql://"):
         raise ValueError("Production requires the MySQL database configuration")
     from .storage import LocalStorage
@@ -51,8 +51,10 @@ def build_context(
     from .ai_service import AiDocumentClient
 
     context.ai_documents = ai_documents or AiDocumentClient.from_settings(settings)
-    context.credentials = Credentials(
-        Path(settings.storage_root) / ".credentials.sqlite3", settings.credential_encryption_key
+    context.credentials = (
+        Credentials(Path(settings.storage_root) / ".credentials.sqlite3", settings.credential_encryption_key)
+        if settings.credential_encryption_key
+        else None
     )
     context.task_gateway = task_gateway or CanonicalTaskGateway()
     context.jobs = JobService(context)
@@ -103,7 +105,7 @@ def create_app(
         ai_documents=ai_documents,
         create_schema=create_schema,
     )
-    app = FastAPI(title="Team4 Learning Backend", version="1.3.0", debug=False)
+    app = FastAPI(title="Team4 Learning Backend", version="1.4.0", debug=False)
     app.state.context = context
     app.add_exception_handler(ApiError, api_error_handler)
 
@@ -137,7 +139,7 @@ def create_app(
             CORSMiddleware,
             allow_origins=list(origins),
             allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
-            allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-AI-Key"],
+            allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
             expose_headers=["X-Request-ID", "Retry-After"],
             allow_credentials=False,
             max_age=600,
@@ -145,7 +147,7 @@ def create_app(
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, exc):
-        # Pydantic's default errors may echo X-AI-Key or arbitrary uploaded data.
+        # Pydantic's default errors may echo arbitrary uploaded data.
         details = [
             {"field": ".".join(str(x) for x in e["loc"]), "reason": "Invalid or missing value"}
             for e in exc.errors()
@@ -191,20 +193,31 @@ def create_app(
     def health():
         return {"status": "ok"}
 
+    @app.get("/v1/billing/capabilities", tags=["Subscription"])
+    def billing_capabilities(request: Request):
+        get_user(request)
+        return {
+            "data": {
+                "mode": "monthly_subscription",
+                "subscription_status": "pricing_pending",
+                "checkout_enabled": False,
+            }
+        }
+
     # Publish only canonical operations actually mounted by the integrated server.
     source = json.loads(
-        (Path(__file__).resolve().parents[1] / "contracts" / "openapi-1.3.0.json").read_text(encoding="utf-8")
+        (Path(__file__).resolve().parents[1] / "contracts" / "openapi-1.4.0-monthly-subscription.json").read_text(encoding="utf-8")
     )
     source = copy.deepcopy(source)
     source["info"]["title"] = "Team4 Learning Backend — implemented contract"
     source["info"]["description"] = (
-        "Integrated A and B routes. See README for external authentication and deployment prerequisites."
+        "Integrated A and B routes. AI provider credentials are service-managed; payment checkout and subscription entitlement verification remain pending."
     )
 
     def normalize(path):
         return re.sub(r"\{[^}]+\}", "{}", path.removeprefix("/v1"))
 
-    inventory = get_openapi(title="Mounted routes", version="1.3.0", routes=app.routes)
+    inventory = get_openapi(title="Mounted routes", version="1.4.0", routes=app.routes)
     mounted = {
         (normalize(path), method) for path, operations in inventory["paths"].items() for method in operations
     }

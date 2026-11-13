@@ -35,6 +35,10 @@ class Settings:
     auth_issuer: str = ""
     auth_audience: str = ""
     enabled_models: tuple = ()
+    # Service-owned provider credentials; never accepted from client requests.
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    gemini_api_key: str = ""
     # Optional internal AI server (repo AI). Empty keeps local extraction.
     ai_service_url: str = ""
     ai_service_api_key: str = ""

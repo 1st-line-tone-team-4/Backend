@@ -1,5 +1,7 @@
 # 팀 repo 최초 통합 (2026-11-09)
 
+> **현재 기준:** 아래 통합·프런트엔드 검증 기록은 당시의 BYOK 계약을 설명하는 역사적 기록입니다. 현재 Backend는 월 구독형 계약으로 전환되어 공개 API에서 `X-AI-Key` 입력을 받지 않으며, AI 제공자 키는 서버가 관리합니다. 현재 계약은 [openapi-1.4.0-monthly-subscription.json](../contracts/openapi-1.4.0-monthly-subscription.json)입니다. 실제 checkout과 구독 권한 검증은 후속 작업입니다.
+
 브랜치 `integration/initial-20261109`는 `integration/a-b-20261101`(ce268e9, A+B 통합)을 기반으로 한 첫 번째 팀 전체 통합 브랜치입니다.
 
 ## 통합 시점의 브랜치 현황

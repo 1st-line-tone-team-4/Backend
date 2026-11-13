@@ -2,12 +2,12 @@
 
 A 라우터는 `app.main:create_app`에 B 라우터와 함께 등록됩니다. 동일한 인증, `app.models.Base`, DB transaction, 멱등성, JobService, worker를 사용합니다. 설치·환경 설정·마이그레이션은 [루트 README](../README.md)를 따릅니다. A 단독 DB/서버를 실행하거나 별도의 worker 콜백으로 결과를 쓰지 않습니다.
 
-정확한 요청·응답 schema는 실행 중인 `/openapi.json`과 [계약 OpenAPI](../contracts/openapi-1.3.0.json)를 참고합니다. 계약에는 구현 범위 밖의 공개·점수 API도 있으므로 제공 경로는 [통합 경로 목록](API_SPEC_FULL.md)과 함께 확인합니다.
+정확한 요청·응답 schema는 실행 중인 `/openapi.json`과 [구현된 최종 OpenAPI 명세](../contracts/openapi-final-monthly-subscription.yaml)를 참고합니다. 전체 계약과 구현되지 않은 공개·점수 API 구분은 [통합 경로 목록](API_SPEC_FULL.md)에서 확인합니다.
 
 ## 공통 규칙
 
 - 경로 접두사는 `/v1`입니다. 외부 RS256 JWT를 Bearer 헤더로 전달합니다. 첫 유효 인증에서 로컬 사용자를 생성하며, 비밀번호 가입·로그인과 토큰 발급은 외부 인증 제공자의 책임입니다.
-- POST는 `Idempotency-Key`가 필요합니다. AI 작업 POST는 `X-AI-Key`와 `model_id`도 필요합니다. 키를 다시 입력한다고 기존 불확실한 Job이 자동 재실행되지는 않습니다.
+- POST는 `Idempotency-Key`가 필요합니다. AI 작업 POST는 허용된 `model_id`를 받으며, 제공자 키는 서버에서 공급합니다. 클라이언트는 AI 키를 전송하지 않습니다.
 - 성공 응답은 `{data:…}`, 목록은 `{data:[…],next_cursor:…}`입니다. 실패는 `{error:{code,message,request_id,details}}`입니다.
 - 날짜는 Asia/Seoul, timestamp는 UTC입니다. ID는 UUID 문자열입니다. 다른 사용자의 리소스는 `404`로 처리합니다.
 - A 목록 cursor는 소유자·필터에 묶인 서명 값입니다. 다른 사용자나 다른 필터에 재사용하지 않습니다.
