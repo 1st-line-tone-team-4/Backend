@@ -1,8 +1,8 @@
 "openapi": "3.1.0"
 "info":
   "title": "Team4 Learning Backend — 구현된 API"
-  "version": "1.4.0"
-  "description": "현재 백엔드에 등록된 API 명세입니다(40개 경로, 51개 작업). AI 제공자 키는 서버에서 관리하며 클라이언트 요청에 포함되지 않습니다. GET /billing/capabilities는 월 구독 정책과 현재 상태를 안내합니다. 가격·결제 연동 및 구독 권한 검증은 후속 범위입니다. 공개 문제 게시와 점수 인증 API는 아직 구현되지 않아 이 파일에 포함하지 않았습니다."
+  "version": "1.5.0"
+  "description": "현재 백엔드에 등록된 API 명세입니다(41개 경로, 52개 작업). AI 제공자 키는 서버에서 관리하며 클라이언트 요청에 포함되지 않습니다. GET /billing/capabilities는 월 구독 정책과 사용자별 구독 상태(pricing_pending=무료, active=구독 중)를 안내하고, 결제 연동 전까지는 데모용 PUT /billing/subscription으로 상태를 바꿉니다. 가격·결제 연동은 후속 범위입니다. 공개 문제 게시와 점수 인증 API는 아직 구현되지 않아 이 파일에 포함하지 않았습니다."
 "servers":
   -
     "url": "/v1"
@@ -2508,7 +2508,7 @@
   "/billing/capabilities":
     "get":
       "operationId": "getBillingCapabilities"
-      "description": "월 구독 방식의 현재 제공 정책을 조회한다. 가격이 확정되고 결제·구독 연동이 완료되기 전까지 checkout_enabled=false이며 subscription_status=pricing_pending이다."
+      "description": "월 구독 방식의 현재 제공 정책과 호출한 사용자의 구독 상태를 조회한다. subscription_status는 pricing_pending(무료, 기본값) 또는 active(구독 중)이다. 가격·결제 연동 전이므로 checkout_enabled=false이다."
       "responses":
         "200":
           "description": "성공"
@@ -2525,7 +2525,72 @@
                         "const": "monthly_subscription"
                       "subscription_status":
                         "type": "string"
-                        "const": "pricing_pending"
+                        "enum":
+                          - "pricing_pending"
+                          - "active"
+                      "checkout_enabled":
+                        "type": "boolean"
+                        "const": false
+                    "required":
+                      - "mode"
+                      - "subscription_status"
+                      - "checkout_enabled"
+                    "additionalProperties": false
+                "required":
+                  - "data"
+                "additionalProperties": false
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "422":
+          "$ref": "#/components/responses/Error"
+        "429":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      "parameters": []
+  "/billing/subscription":
+    "put":
+      "operationId": "setDemoSubscription"
+      "description": "데모용 구독 상태 전환. 실제 결제 없이 호출한 사용자의 구독 상태를 active=true면 active, false면 pricing_pending으로 바꾸고 billing/capabilities와 같은 형태로 반환한다. 결제 연동 시 결제 확인 흐름으로 대체된다."
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "type": "object"
+              "properties":
+                "active":
+                  "type": "boolean"
+              "required":
+                - "active"
+              "additionalProperties": false
+      "responses":
+        "200":
+          "description": "성공"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "properties":
+                  "data":
+                    "type": "object"
+                    "properties":
+                      "mode":
+                        "type": "string"
+                        "const": "monthly_subscription"
+                      "subscription_status":
+                        "type": "string"
+                        "enum":
+                          - "pricing_pending"
+                          - "active"
                       "checkout_enabled":
                         "type": "boolean"
                         "const": false

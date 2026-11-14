@@ -87,7 +87,7 @@ python -m app.worker --once
 
 AI 단계에는 허용 모델과 서버에 설정된 제공자 키가 필요합니다. 클라이언트는 제공자 키를 입력하거나 `X-AI-Key`로 전송하지 않습니다. 서버는 설정된 키가 없는 모델을 사용 불가로 표시하고 요청을 거부합니다.
 
-제품 과금 방침은 월 구독입니다. 가격·결제사는 아직 정해지지 않아 checkout과 실제 구독 권한 검증은 후속 연동 범위입니다. `GET /v1/billing/capabilities`는 `pricing_pending`, `checkout_enabled=false`를 반환합니다. 모든 AI 생성은 서버 관리 제공자 키를 사용합니다. 중복 실행 동의는 결과가 불확실한 작업의 AI 재실행 가능성에 대한 것이며 구독료 외 별도 결제를 뜻하지 않습니다.
+제품 과금 방침은 월 구독입니다. 가격·결제사는 아직 정해지지 않아 checkout과 실제 구독 권한 검증은 후속 연동 범위입니다. `GET /v1/billing/capabilities`는 사용자별 구독 상태(`pricing_pending`=무료 기본값, `active`=구독 중)와 `checkout_enabled=false`를 반환합니다. 결제 연동 전까지는 데모용 `PUT /v1/billing/subscription` `{"active": true|false}`로 실제 결제 없이 상태를 바꿉니다(계약 1.5.0, MySQL은 `migrations/007_mysql_demo_subscription.sql` 적용, 개발용 SQLite는 시작 시 테이블 자동 생성). 모든 AI 생성은 서버 관리 제공자 키를 사용합니다. 중복 실행 동의는 결과가 불확실한 작업의 AI 재실행 가능성에 대한 것이며 구독료 외 별도 결제를 뜻하지 않습니다.
 
 보고서 작업이 종료된 `report_pending` 세션은 저장된 보고서가 없으면 `{status:"abandoned"}` PATCH로 포기할 수 있습니다. 실행 중 작업은 `409`로 보호하고, 완료된 보고서는 변경하지 않습니다. 포기 재시도는 `200`이며, 기존 대화·Job 포인터·실패 이력을 남깁니다. 연결된 계획이 바뀌어도 포기 재시도가 가능하며 학습 완료량을 바꾸지 않습니다.
 
@@ -104,7 +104,7 @@ provider 생성 요청의 전체 제한은 300초이며 기본 worker lease는 4
 
 ## 제공 범위와 검증 자료
 
-현재 전체 계약은 49개 경로·63개 작업이고, 통합 서버는 그중 40개 경로·51개 작업을 게시합니다. 월 구독 상태를 알리는 `GET /billing/capabilities`는 구현되어 있지만 실제 checkout과 구독 권한 검증은 아직 없습니다. 공개 게시·공개 풀이 생성·점수 인증과 결제 연동의 미구현 범위는 [통합 검증 기록](docs/INTEGRATION_VALIDATION.md)을 참고하세요. 35개 테이블이 있다는 사실이 빠진 기능의 구현을 뜻하지는 않습니다.
+현재 전체 계약은 50개 경로·64개 작업이고, 통합 서버는 그중 41개 경로·52개 작업을 게시합니다. 월 구독 상태를 알리는 `GET /billing/capabilities`와 데모용 상태 전환 `PUT /billing/subscription`은 구현되어 있지만 실제 checkout과 결제 검증은 아직 없습니다. 공개 게시·공개 풀이 생성·점수 인증과 결제 연동의 미구현 범위는 [통합 검증 기록](docs/INTEGRATION_VALIDATION.md)을 참고하세요. 36개 테이블이 있다는 사실이 빠진 기능의 구현을 뜻하지는 않습니다.
 
 `GET /v1/records/public-attempts`는 구현되어 있으며 소유자의 저장된 개인 snapshot을 조회합니다. 적법하게 준비하거나 가져온 기존 데이터가 있으면 결과를 반환하므로 항상 빈 목록이라고 가정하지 않습니다. 이 조회가 공개 게시나 새로운 공개 풀이 생성 API를 대신하지는 않습니다.
 

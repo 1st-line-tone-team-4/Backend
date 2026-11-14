@@ -53,7 +53,7 @@ def test_single_registry_matches_every_canonical_table_and_constraint():
     assert a_models.Unit is MaterialUnit
     sql = (ROOT / "contracts/schema-proposal-1.3.0.sql").read_text(encoding="utf-8")
     expected = dict(re.findall(r"CREATE TABLE `([^`]+)` \((.*?)\n\) ENGINE=", sql, re.S))
-    assert len(expected) == 35 and expected.keys() == Base.metadata.tables.keys()
+    assert len(expected) == 36 and expected.keys() == Base.metadata.tables.keys()
     operational_extras = {
         "ai_jobs": {"dispatched_at", "credential_ref", "last_polled_at", "active_resource_id"},
     }
@@ -106,10 +106,10 @@ def test_single_registry_matches_every_canonical_table_and_constraint():
 
 def test_mysql_chain_covers_full_schema_without_recreating_task_history():
     files = sorted((ROOT / "migrations").glob("[0-9][0-9][0-9]_mysql_*.sql"))
-    assert [path.name[:3] for path in files] == ["000", "001", "002", "003", "004", "005", "006"]
+    assert [path.name[:3] for path in files] == ["000", "001", "002", "003", "004", "005", "006", "007"]
     sql = "\n".join(path.read_text(encoding="utf-8") for path in files)
     created = re.findall(r"CREATE TABLE (\w+)\s*\(", sql)
-    assert len(created) == len(set(created)) == 35
+    assert len(created) == len(set(created)) == 36
     assert set(created) == Base.metadata.tables.keys()
     migration = files[5].read_text(encoding="utf-8")
     assert "INSERT INTO ab_005_preflight SELECT 0 FROM plan_tasks LIMIT 1" in migration
@@ -307,4 +307,4 @@ def test_uuid_object_binds_preserve_string_storage(graph):
     with db.transaction() as session:
         assert session.get(User, UUID(ids["user"])).id == ids["user"]
         assert isinstance(session.get(User, UUID(ids["user"])).id, str)
-    assert len(inspect(db.engine).get_table_names()) == 35
+    assert len(inspect(db.engine).get_table_names()) == 36

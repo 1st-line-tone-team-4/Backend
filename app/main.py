@@ -44,6 +44,11 @@ def build_context(
     db = Database(settings.database_url)
     if create_schema:
         db.create_schema()
+    elif settings.profile != "production":
+        # Demo subscription table (contract 1.5.0) for existing dev databases.
+        from .models import UserSubscription
+
+        UserSubscription.__table__.create(db.engine, checkfirst=True)
     context = SimpleNamespace(settings=settings, db=db)
     context.auth = auth or JWTAuthenticator(settings, db)
     context.storage = LocalStorage(settings)
@@ -105,7 +110,7 @@ def create_app(
         ai_documents=ai_documents,
         create_schema=create_schema,
     )
-    app = FastAPI(title="Team4 Learning Backend", version="1.4.0", debug=False)
+    app = FastAPI(title="Team4 Learning Backend", version="1.5.0", debug=False)
     app.state.context = context
     app.add_exception_handler(ApiError, api_error_handler)
 
@@ -193,16 +198,9 @@ def create_app(
     def health():
         return {"status": "ok"}
 
-    @app.get("/v1/billing/capabilities", tags=["Subscription"])
-    def billing_capabilities(request: Request):
-        get_user(request)
-        return {
-            "data": {
-                "mode": "monthly_subscription",
-                "subscription_status": "pricing_pending",
-                "checkout_enabled": False,
-            }
-        }
+    from .billing import router as billing_router
+
+    app.include_router(billing_router, prefix="/v1")
 
     # Publish only canonical operations actually mounted by the integrated server.
     source = json.loads(
@@ -219,7 +217,7 @@ def create_app(
     def normalize(path):
         return re.sub(r"\{[^}]+\}", "{}", path.removeprefix("/v1"))
 
-    inventory = get_openapi(title="Mounted routes", version="1.4.0", routes=app.routes)
+    inventory = get_openapi(title="Mounted routes", version="1.5.0", routes=app.routes)
     mounted = {
         (normalize(path), method) for path, operations in inventory["paths"].items() for method in operations
     }

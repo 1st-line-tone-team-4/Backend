@@ -147,10 +147,13 @@ def _assert_b_upgrade_boundary(db):
         assert result.rowcount == 1
     with db.engine.begin() as connection:
         _execute_migration(connection, "005_mysql_canonical_a_schema.sql")
+    with db.engine.begin() as connection:
+        # 007 only adds the demo subscription table on top of users.
+        _execute_migration(connection, "007_mysql_demo_subscription.sql")
     with db.engine.connect() as connection:
         inspector = inspect(connection)
         assert set(inspector.get_table_names()) == set(Base.metadata.tables)
-        assert len(inspector.get_table_names()) == 35
+        assert len(inspector.get_table_names()) == 36
         for table in Base.metadata.tables.values():
             assert {column["name"] for column in inspector.get_columns(table.name)} == set(table.c.keys())
         assert _b_snapshot(connection, ids) == before

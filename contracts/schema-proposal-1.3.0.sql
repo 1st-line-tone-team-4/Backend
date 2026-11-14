@@ -18,6 +18,15 @@ CREATE TABLE `users` (
   CONSTRAINT `ck_users_0` CHECK (timezone = 'Asia/Seoul')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
+CREATE TABLE `user_subscriptions` (
+  `user_id` CHAR(36) NOT NULL,
+  `status` VARCHAR(32) NOT NULL DEFAULT 'pricing_pending',
+  `updated_at` DATETIME(3) NOT NULL,
+  PRIMARY KEY (`user_id`),
+  CONSTRAINT `fk_user_subscriptions_0` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `ck_user_subscriptions_0` CHECK (status IN ('pricing_pending','active'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
 CREATE TABLE `ai_jobs` (
   `id` CHAR(36) NOT NULL,
   `user_id` CHAR(36) NOT NULL,

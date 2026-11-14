@@ -71,6 +71,19 @@ class User(Base):
     )
 
 
+
+class UserSubscription(Base):
+    """Demo subscription state per learner; no payment is involved (contract 1.5.0)."""
+
+    __tablename__ = "user_subscriptions"
+    user_id = Column(UUIDString, primary_key=True)
+    status = Column(String(32), nullable=False, default="pricing_pending")
+    updated_at = Column(DateTime, nullable=False, default=_utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="RESTRICT", onupdate="RESTRICT"),
+        CheckConstraint("status IN ('pricing_pending','active')", name="ck_user_subscriptions_0"),
+    )
+
 class Job(Base):
     __tablename__ = "ai_jobs"
     id = Column(UUIDString, primary_key=True)

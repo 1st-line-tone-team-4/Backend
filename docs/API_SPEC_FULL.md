@@ -1,6 +1,6 @@
 # 통합 API 안내 — 현재 제공 범위
 
-이 문서는 `app.main:create_app`에 실제 등록된 **40개 경로 / 51개 작업(A+B)**의 연결 안내입니다. 경로 앞에는 `/v1`을 붙입니다. 구현된 최종 명세는 [월 구독형 OpenAPI YAML](../contracts/openapi-final-monthly-subscription.yaml)이며, 전체 계약 원본은 [월 구독형 OpenAPI JSON](../contracts/openapi-1.4.0-monthly-subscription.json)입니다. 공개·점수 API와 checkout·구독 권한 검증은 아직 구현 범위에 없습니다.
+이 문서는 `app.main:create_app`에 실제 등록된 **41개 경로 / 52개 작업(A+B)**의 연결 안내입니다. 경로 앞에는 `/v1`을 붙입니다. 구현된 최종 명세는 [월 구독형 OpenAPI YAML](../contracts/openapi-final-monthly-subscription.yaml)이며, 전체 계약 원본은 [월 구독형 OpenAPI JSON](../contracts/openapi-1.4.0-monthly-subscription.json)입니다. 공개·점수 API와 checkout·구독 권한 검증은 아직 구현 범위에 없습니다.
 
 실행 중인 `/docs`와 `/openapi.json`은 등록된 계약 경로만 게시합니다. 파일 형태의 [openapi-full.json](openapi-full.json), [openapi-a.json](openapi-a.json)은 배포하려는 commit에서 갱신된 snapshot인지 확인해야 합니다. 요청 body·필드 제약·응답 schema의 기준은 OpenAPI이고, 이 문서의 표는 경로 요약입니다.
 
@@ -12,7 +12,7 @@
 | 사용자 생성 | 유효한 첫 `(issuer,subject)` 인증 시 로컬 사용자 생성; 비밀번호 가입·로그인·토큰 발급 API 없음 |
 | 멱등성 | POST의 `Idempotency-Key` 16–128자; 같은 키와 다른 요청은 `409` |
 | AI 요청 | 허용된 `model_id`; 제공자 키는 서버 Secret Manager에서 관리하고 클라이언트 요청에는 포함하지 않음 |
-| 구독 | `GET /billing/capabilities`; 가격·결제 연동 전 `pricing_pending`, checkout 비활성 |
+| 구독 | `GET /billing/capabilities`(사용자별 `pricing_pending`/`active`), 데모용 `PUT /billing/subscription` `{active}`; 가격·결제 연동 전 checkout 비활성 |
 | 성공·목록 | `{data:…}` / `{data:[…],next_cursor:…}` |
 | 오류 | `{error:{code,message,request_id,details}}`; 소유자 불일치 `404`, 입력 오류 `422`, 상태 충돌 `409` |
 | 날짜·ID | Asia/Seoul 달력 날짜, UTC timestamp, UUID 문자열 |
